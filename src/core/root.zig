@@ -2,6 +2,9 @@ pub const types = @import("types.zig");
 pub const config = @import("config.zig");
 pub const config_loader = @import("config_loader.zig");
 pub const soul = @import("soul.zig");
+pub const sqlite = @import("sqlite.zig");
+pub const database = @import("database.zig");
+pub const search = @import("search.zig");
 
 // Re-export all public declarations from types
 pub const Platform = types.Platform;

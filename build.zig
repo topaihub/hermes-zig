@@ -13,9 +13,11 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
             .imports = &.{.{ .name = "framework", .module = framework_mod }},
         }),
     });
+    exe.root_module.linkSystemLibrary("sqlite3", .{});
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -28,8 +30,10 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
             .imports = &.{.{ .name = "framework", .module = framework_mod }},
         }),
     });
+    tests.root_module.linkSystemLibrary("sqlite3", .{});
     b.step("test", "Run unit tests").dependOn(&b.addRunArtifact(tests).step);
 }

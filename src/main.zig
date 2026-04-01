@@ -69,3 +69,16 @@ test "Soul loading returns null when file doesn't exist" {
     const result = try core.soul.loadSoul(std.testing.allocator, "/tmp/nonexistent-hermes-test-dir");
     try std.testing.expectEqual(null, result);
 }
+
+test "SQLite file-based integration" {
+    const path = "/tmp/_hermes_test.db";
+    const db = try core.sqlite.Database.open(path);
+    defer {
+        db.close();
+        std.fs.cwd().deleteFile(path) catch {};
+    }
+    try core.database.initSchema(db);
+    try core.database.createSession(db, "test-1", "cli", "gpt-4");
+    try core.database.appendMessage(db, "test-1", "user", "hello");
+    try std.testing.expectEqual(@as(i64, 1), try core.database.getMessageCount(db, "test-1"));
+}
