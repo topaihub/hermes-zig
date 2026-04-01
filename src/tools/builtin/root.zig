@@ -18,6 +18,12 @@ pub const cronjob = @import("cronjob.zig");
 pub const browser_actions = @import("browser_actions.zig");
 pub const homeassistant = @import("homeassistant.zig");
 pub const honcho = @import("honcho.zig");
+pub const skills_ops = @import("skills_ops.zig");
+pub const rl_training = @import("rl_training.zig");
+pub const session_search = @import("session_search.zig");
+pub const mixture_of_agents = @import("mixture_of_agents.zig");
+pub const process = @import("process.zig");
+pub const checkpoint = @import("checkpoint.zig");
 
 pub const BashTool = bash.BashTool;
 pub const FileReadTool = file_read.FileReadTool;
@@ -61,6 +67,32 @@ pub const HonchoContext = honcho.HonchoContext;
 pub const HonchoProfile = honcho.HonchoProfile;
 pub const HonchoSearch = honcho.HonchoSearch;
 pub const HonchoConclude = honcho.HonchoConclude;
+
+// skills_ops (3)
+pub const SkillsList = skills_ops.SkillsList;
+pub const SkillView = skills_ops.SkillView;
+pub const SkillManage = skills_ops.SkillManage;
+
+// rl_training (7)
+pub const RlStartTraining = rl_training.RlStartTraining;
+pub const RlStopTraining = rl_training.RlStopTraining;
+pub const RlCheckStatus = rl_training.RlCheckStatus;
+pub const RlGetResults = rl_training.RlGetResults;
+pub const RlListEnvironments = rl_training.RlListEnvironments;
+pub const RlSelectEnvironment = rl_training.RlSelectEnvironment;
+pub const RlEditConfig = rl_training.RlEditConfig;
+
+// session_search (1)
+pub const SessionSearchTool = session_search.SessionSearchTool;
+
+// mixture_of_agents (1)
+pub const MixtureOfAgentsTool = mixture_of_agents.MixtureOfAgentsTool;
+
+// process (1)
+pub const ProcessTool = process.ProcessTool;
+
+// checkpoint (1)
+pub const CheckpointTool = checkpoint.CheckpointTool;
 
 comptime {
     @import("std").testing.refAllDecls(@This());
