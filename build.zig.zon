@@ -1,0 +1,17 @@
+.{
+    .name = .hermes_zig,
+    .version = "0.1.0",
+    .fingerprint = 0x78f081404ef3b4b1,
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{
+        .framework = .{
+            .url = "https://github.com/topaihub/zig-framework/archive/refs/heads/codex/framework-tooling-runtime-vnext.tar.gz",
+            .hash = "framework-0.1.0-cN4T2mzbCADiw9LHzExzcMQE7SxUy5oSxt5RmcHhjfdS",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
