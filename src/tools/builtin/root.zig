@@ -8,6 +8,8 @@ pub const memory_tool = @import("memory_tool.zig");
 pub const clarify = @import("clarify.zig");
 pub const delegate = @import("delegate.zig");
 pub const send_message = @import("send_message.zig");
+pub const file_edit = @import("file_edit.zig");
+pub const code_execution = @import("code_execution.zig");
 
 pub const BashTool = bash.BashTool;
 pub const FileReadTool = file_read.FileReadTool;
@@ -19,6 +21,8 @@ pub const MemoryTool = memory_tool.MemoryTool;
 pub const ClarifyTool = clarify.ClarifyTool;
 pub const DelegateTool = delegate.DelegateTool;
 pub const SendMessageTool = send_message.SendMessageTool;
+pub const FileEditTool = file_edit.FileEditTool;
+pub const CodeExecutionTool = code_execution.CodeExecutionTool;
 
 comptime {
     @import("std").testing.refAllDecls(@This());
