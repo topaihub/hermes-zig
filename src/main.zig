@@ -2,6 +2,7 @@ const std = @import("std");
 const framework = @import("framework");
 pub const core = @import("core/root.zig");
 pub const llm = @import("llm/root.zig");
+pub const tools = @import("tools/root.zig");
 
 pub fn main() !void {
     std.debug.print("hermes-zig\n", .{});
