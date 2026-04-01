@@ -36,3 +36,36 @@ test "SessionSource construction works" {
     try std.testing.expectEqualStrings("u1", src.user_id.?);
     try std.testing.expectEqual(null, src.thread_id);
 }
+
+test "Config defaults are correct" {
+    const cfg = core.Config{};
+    try std.testing.expectEqualStrings("openrouter/nous-hermes", cfg.model);
+    try std.testing.expectEqualStrings("openrouter", cfg.provider);
+    try std.testing.expect(cfg.temperature == 0.7);
+    try std.testing.expectEqual(null, cfg.max_tokens);
+    try std.testing.expectEqual(false, cfg.reasoning.enabled);
+    try std.testing.expectEqualStrings("medium", cfg.reasoning.effort);
+    try std.testing.expectEqual(true, cfg.security.command_approval);
+    try std.testing.expectEqual(true, cfg.memory.enabled);
+    try std.testing.expectEqual(@as(u32, 10), cfg.memory.nudge_interval);
+}
+
+test "JSON parsing works" {
+    const json = "{\"model\": \"gpt-4\", \"temperature\": 0.5}";
+    var loaded = try core.config_loader.loadFromString(json, std.testing.allocator);
+    defer loaded.deinit();
+    try std.testing.expectEqualStrings("gpt-4", loaded.parsed.value.model);
+    try std.testing.expect(loaded.parsed.value.temperature == 0.5);
+}
+
+test "Empty JSON uses all defaults" {
+    var loaded = try core.config_loader.loadFromString("{}", std.testing.allocator);
+    defer loaded.deinit();
+    try std.testing.expectEqualStrings("openrouter/nous-hermes", loaded.parsed.value.model);
+    try std.testing.expect(loaded.parsed.value.temperature == 0.7);
+}
+
+test "Soul loading returns null when file doesn't exist" {
+    const result = try core.soul.loadSoul(std.testing.allocator, "/tmp/nonexistent-hermes-test-dir");
+    try std.testing.expectEqual(null, result);
+}
