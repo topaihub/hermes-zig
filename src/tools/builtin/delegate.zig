@@ -3,7 +3,7 @@ const tools_interface = @import("../interface.zig");
 
 pub const DelegateTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
-        .name = "delegate",
+        .name = "delegate_task",
         .description = "Delegate a task to a subagent",
         .parameters_schema =
             \\{"type":"object","properties":{"task":{"type":"string","description":"Task description for the subagent"}},"required":["task"]}
@@ -22,5 +22,5 @@ pub const DelegateTool = struct {
 test "DelegateTool schema" {
     var tool = DelegateTool{};
     const handler = tools_interface.makeToolHandler(DelegateTool, &tool);
-    try std.testing.expectEqualStrings("delegate", handler.schema.name);
+    try std.testing.expectEqualStrings("delegate_task", handler.schema.name);
 }

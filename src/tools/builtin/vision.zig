@@ -3,7 +3,7 @@ const tools_interface = @import("../interface.zig");
 
 pub const VisionTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
-        .name = "vision",
+        .name = "vision_analyze",
         .description = "Analyze images using LLM vision capabilities",
         .parameters_schema =
             \\{"type":"object","properties":{"image_path":{"type":"string","description":"Path to the image file"},"prompt":{"type":"string","description":"Analysis prompt"}},"required":["image_path","prompt"]}
@@ -22,5 +22,5 @@ pub const VisionTool = struct {
 test "VisionTool schema" {
     var tool = VisionTool{};
     const handler = tools_interface.makeToolHandler(VisionTool, &tool);
-    try std.testing.expectEqualStrings("vision", handler.schema.name);
+    try std.testing.expectEqualStrings("vision_analyze", handler.schema.name);
 }

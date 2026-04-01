@@ -6,7 +6,7 @@ pub const CodeExecutionTool = struct {
     backend: *tools_terminal.TerminalBackend,
 
     pub const SCHEMA = tools_interface.ToolSchema{
-        .name = "code_execution",
+        .name = "execute_code",
         .description = "Execute code via terminal backend",
         .parameters_schema =
             \\{"type":"object","properties":{"language":{"type":"string","description":"python or javascript"},"code":{"type":"string","description":"Code to execute"}},"required":["language","code"]}
@@ -42,5 +42,5 @@ test "CodeExecutionTool schema" {
     var backend = tools_terminal.TerminalBackend{ .local = .{} };
     var tool = CodeExecutionTool{ .backend = &backend };
     const handler = tools_interface.makeToolHandler(CodeExecutionTool, &tool);
-    try std.testing.expectEqualStrings("code_execution", handler.schema.name);
+    try std.testing.expectEqualStrings("execute_code", handler.schema.name);
 }

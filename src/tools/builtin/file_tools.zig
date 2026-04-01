@@ -6,7 +6,7 @@ pub const FileTools = struct {
     backend: *terminal.TerminalBackend,
 
     pub const SCHEMA = tools_interface.ToolSchema{
-        .name = "file_tools",
+        .name = "search_files",
         .description = "File operations: ls, find, grep, tree",
         .parameters_schema =
             \\{"type":"object","properties":{"operation":{"type":"string","enum":["ls","find","grep","tree"]},"path":{"type":"string"},"pattern":{"type":"string"}},"required":["operation","path"]}
@@ -41,5 +41,5 @@ test "FileTools schema" {
     var backend = terminal.TerminalBackend{ .local = .{} };
     var tool = FileTools{ .backend = &backend };
     const handler = tools_interface.makeToolHandler(FileTools, &tool);
-    try std.testing.expectEqualStrings("file_tools", handler.schema.name);
+    try std.testing.expectEqualStrings("search_files", handler.schema.name);
 }

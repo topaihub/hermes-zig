@@ -3,7 +3,7 @@ const tools_interface = @import("../interface.zig");
 
 pub const FileEditTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
-        .name = "file_edit",
+        .name = "patch",
         .description = "Apply text replacements to a file",
         .parameters_schema =
             \\{"type":"object","properties":{"path":{"type":"string","description":"File path"},"old_text":{"type":"string","description":"Text to find"},"new_text":{"type":"string","description":"Replacement text"}},"required":["path","old_text","new_text"]}
@@ -46,7 +46,7 @@ pub const FileEditTool = struct {
 test "FileEditTool schema" {
     var tool = FileEditTool{};
     const handler = tools_interface.makeToolHandler(FileEditTool, &tool);
-    try std.testing.expectEqualStrings("file_edit", handler.schema.name);
+    try std.testing.expectEqualStrings("patch", handler.schema.name);
 }
 
 test "FileEditTool replace text" {

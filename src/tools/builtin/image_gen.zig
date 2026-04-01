@@ -3,7 +3,7 @@ const tools_interface = @import("../interface.zig");
 
 pub const ImageGenTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
-        .name = "image_gen",
+        .name = "image_generate",
         .description = "Generate images from text prompts",
         .parameters_schema =
             \\{"type":"object","properties":{"prompt":{"type":"string","description":"Image generation prompt"},"size":{"type":"string","description":"Image size"}},"required":["prompt","size"]}
@@ -22,5 +22,5 @@ pub const ImageGenTool = struct {
 test "ImageGenTool schema" {
     var tool = ImageGenTool{};
     const handler = tools_interface.makeToolHandler(ImageGenTool, &tool);
-    try std.testing.expectEqualStrings("image_gen", handler.schema.name);
+    try std.testing.expectEqualStrings("image_generate", handler.schema.name);
 }

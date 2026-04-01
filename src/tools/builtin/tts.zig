@@ -3,7 +3,7 @@ const tools_interface = @import("../interface.zig");
 
 pub const TtsTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
-        .name = "tts",
+        .name = "text_to_speech",
         .description = "Convert text to speech audio",
         .parameters_schema =
             \\{"type":"object","properties":{"text":{"type":"string","description":"Text to convert to speech"},"voice":{"type":"string","description":"Voice to use"}},"required":["text","voice"]}
@@ -22,5 +22,5 @@ pub const TtsTool = struct {
 test "TtsTool schema" {
     var tool = TtsTool{};
     const handler = tools_interface.makeToolHandler(TtsTool, &tool);
-    try std.testing.expectEqualStrings("tts", handler.schema.name);
+    try std.testing.expectEqualStrings("text_to_speech", handler.schema.name);
 }

@@ -3,7 +3,7 @@ const tools_interface = @import("../interface.zig");
 
 pub const FileReadTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
-        .name = "file_read",
+        .name = "read_file",
         .description = "Read file contents, optionally a range of lines",
         .parameters_schema =
             \\{"type":"object","properties":{"path":{"type":"string"},"start_line":{"type":"integer"},"end_line":{"type":"integer"}},"required":["path"]}
@@ -44,7 +44,7 @@ pub const FileReadTool = struct {
 test "FileReadTool schema" {
     var tool = FileReadTool{};
     const handler = tools_interface.makeToolHandler(FileReadTool, &tool);
-    try std.testing.expectEqualStrings("file_read", handler.schema.name);
+    try std.testing.expectEqualStrings("read_file", handler.schema.name);
 }
 
 test "FileReadTool read file" {

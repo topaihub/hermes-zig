@@ -6,7 +6,7 @@ pub const BashTool = struct {
     backend: *terminal.TerminalBackend,
 
     pub const SCHEMA = tools_interface.ToolSchema{
-        .name = "bash",
+        .name = "terminal",
         .description = "Execute a shell command",
         .parameters_schema =
             \\{"type":"object","properties":{"command":{"type":"string","description":"Shell command to execute"}},"required":["command"]}
@@ -32,7 +32,7 @@ test "BashTool schema" {
     var backend = terminal.TerminalBackend{ .local = .{} };
     var tool = BashTool{ .backend = &backend };
     const handler = tools_interface.makeToolHandler(BashTool, &tool);
-    try std.testing.expectEqualStrings("bash", handler.schema.name);
+    try std.testing.expectEqualStrings("terminal", handler.schema.name);
 }
 
 test "BashTool execute echo" {
