@@ -3,7 +3,7 @@ const tools_interface = @import("../interface.zig");
 
 pub const FileWriteTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
-        .name = "file_write",
+        .name = "write_file",
         .description = "Write content to a file, creating parent directories as needed",
         .parameters_schema =
             \\{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}
@@ -30,7 +30,7 @@ pub const FileWriteTool = struct {
 test "FileWriteTool schema" {
     var tool = FileWriteTool{};
     const handler = tools_interface.makeToolHandler(FileWriteTool, &tool);
-    try std.testing.expectEqualStrings("file_write", handler.schema.name);
+    try std.testing.expectEqualStrings("write_file", handler.schema.name);
 }
 
 test "FileWriteTool write then read" {

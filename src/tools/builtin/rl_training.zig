@@ -43,9 +43,15 @@ pub const RlSelectEnvironment = rlTool("rl_select_environment", "Select an RL en
 pub const RlEditConfig = rlTool("rl_edit_config", "Edit RL training configuration parameters",
     \\{"type":"object","properties":{"key":{"type":"string","description":"Config key"},"value":{"type":"string","description":"Config value"}},"required":["key","value"]}
 );
+pub const RlGetCurrentConfig = rlTool("rl_get_current_config", "Get the current RL training configuration",
+    \\{"type":"object","properties":{}}
+);
+pub const RlListRuns = rlTool("rl_list_runs", "List all RL training runs",
+    \\{"type":"object","properties":{}}
+);
 
 test "RL training tool schemas" {
-    inline for (.{ RlStartTraining, RlStopTraining, RlCheckStatus, RlGetResults, RlListEnvironments, RlSelectEnvironment, RlEditConfig }) |T| {
+    inline for (.{ RlStartTraining, RlStopTraining, RlCheckStatus, RlGetResults, RlListEnvironments, RlSelectEnvironment, RlEditConfig, RlGetCurrentConfig, RlListRuns }) |T| {
         var tool = T{};
         const handler = tools_interface.makeToolHandler(T, &tool);
         try std.testing.expect(handler.schema.name.len > 0);

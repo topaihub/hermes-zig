@@ -32,6 +32,7 @@ pub const FileWriteTool = file_write.FileWriteTool;
 pub const FileTools = file_tools.FileTools;
 pub const FileEditTool = file_edit.FileEditTool;
 pub const WebSearchTool = web_search.WebSearchTool;
+pub const WebExtractTool = web_search.WebExtractTool;
 pub const TodoTool = todo.TodoTool;
 pub const MemoryTool = memory_tool.MemoryTool;
 pub const ClarifyTool = clarify.ClarifyTool;
@@ -75,7 +76,7 @@ pub const SkillsList = skills_ops.SkillsList;
 pub const SkillView = skills_ops.SkillView;
 pub const SkillManage = skills_ops.SkillManage;
 
-// rl_training (7)
+// rl_training (9)
 pub const RlStartTraining = rl_training.RlStartTraining;
 pub const RlStopTraining = rl_training.RlStopTraining;
 pub const RlCheckStatus = rl_training.RlCheckStatus;
@@ -83,6 +84,8 @@ pub const RlGetResults = rl_training.RlGetResults;
 pub const RlListEnvironments = rl_training.RlListEnvironments;
 pub const RlSelectEnvironment = rl_training.RlSelectEnvironment;
 pub const RlEditConfig = rl_training.RlEditConfig;
+pub const RlGetCurrentConfig = rl_training.RlGetCurrentConfig;
+pub const RlListRuns = rl_training.RlListRuns;
 
 // session_search (1)
 pub const SessionSearchTool = session_search.SessionSearchTool;
