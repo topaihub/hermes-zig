@@ -4,6 +4,8 @@ const tools_registry = @import("../tools/registry.zig");
 const tools_interface = @import("../tools/interface.zig");
 const core_types = @import("../core/types.zig");
 const core_config = @import("../core/config.zig");
+const core_database = @import("../core/database.zig");
+const core_sqlite = @import("../core/sqlite.zig");
 
 pub const RunResult = struct {
     content: []u8,
@@ -21,6 +23,9 @@ pub const AgentLoop = struct {
     tools: *tools_registry.ToolRegistry,
     config: *const core_config.Config,
     max_iterations: u32 = 25,
+    fallback_model: ?[]const u8 = null,
+    interrupt_flag: ?*std.atomic.Value(bool) = null,
+    db: ?core_sqlite.Database = null,
 
     pub fn run(self: *AgentLoop, messages: []const core_types.Message, tool_schemas: []const llm_interface.ToolSchema) !RunResult {
         var history = std.ArrayListUnmanaged(core_types.Message){};
@@ -30,6 +35,11 @@ pub const AgentLoop = struct {
         var total_usage = core_types.TokenUsage{};
         var iteration: u32 = 0;
         while (iteration < self.max_iterations) : (iteration += 1) {
+            // Check interrupt flag
+            if (self.interrupt_flag) |flag| {
+                if (flag.load(.acquire)) return error.Interrupted;
+            }
+
             const req = llm_interface.CompletionRequest{
                 .model = self.config.model,
                 .messages = history.items,
@@ -39,7 +49,14 @@ pub const AgentLoop = struct {
                 .stream = false,
             };
 
-            var response = try self.llm.complete(req);
+            var response = self.llm.complete(req) catch |err| blk: {
+                // On LLM error, try fallback model if available
+                if (self.fallback_model) |fb| {
+                    var fb_req = req;
+                    fb_req.model = fb;
+                    break :blk self.llm.complete(fb_req) catch return err;
+                } else return err;
+            };
             defer response.deinit();
 
             total_usage.prompt_tokens += response.usage.prompt_tokens;
@@ -47,8 +64,13 @@ pub const AgentLoop = struct {
             total_usage.total_tokens += response.usage.total_tokens;
 
             if (response.tool_calls == null or response.tool_calls.?.len == 0) {
+                const content = try self.allocator.dupe(u8, response.content orelse "");
+                // Persist to database if available
+                if (self.db) |db| {
+                    core_database.appendMessage(db, "agent", "assistant", content) catch {};
+                }
                 return .{
-                    .content = try self.allocator.dupe(u8, response.content orelse ""),
+                    .content = content,
                     .usage = total_usage,
                     .iterations = iteration + 1,
                 };

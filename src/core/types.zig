@@ -43,6 +43,7 @@ pub const Message = struct {
     content: []const u8 = "",
     tool_call_id: ?[]const u8 = null,
     name: ?[]const u8 = null,
+    image_url: ?[]const u8 = null,
 };
 
 pub const ToolCall = struct {

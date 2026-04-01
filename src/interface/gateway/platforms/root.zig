@@ -16,6 +16,8 @@ pub const homeassistant = @import("homeassistant.zig");
 pub const sms = @import("sms.zig");
 pub const mattermost = @import("mattermost.zig");
 pub const webhook = @import("webhook.zig");
+pub const api_server = @import("api_server.zig");
+pub const telegram_network = @import("telegram_network.zig");
 
 pub const TelegramAdapter = telegram.TelegramAdapter;
 pub const DiscordAdapter = discord.DiscordAdapter;
@@ -31,6 +33,8 @@ pub const HomeAssistantAdapter = homeassistant.HomeAssistantAdapter;
 pub const SmsAdapter = sms.SmsAdapter;
 pub const MattermostAdapter = mattermost.MattermostAdapter;
 pub const WebhookAdapter = webhook.WebhookAdapter;
+pub const ApiServerAdapter = api_server.ApiServerAdapter;
+pub const TelegramNetwork = telegram_network.TelegramNetwork;
 
 comptime {
     @import("std").testing.refAllDecls(@This());

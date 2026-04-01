@@ -39,8 +39,12 @@ pub const OpenAICompatClient = struct {
         errdefer arena.deinit();
         const a = arena.allocator();
 
+        const is_responses = std.mem.startsWith(u8, request.model, "responses/");
         const body = try buildRequestBody(a, request, false);
-        const url = try std.fmt.allocPrint(a, "{s}/chat/completions", .{self.base_url});
+        const url = if (is_responses)
+            try std.fmt.allocPrint(a, "{s}/responses", .{self.base_url})
+        else
+            try std.fmt.allocPrint(a, "{s}/chat/completions", .{self.base_url});
         const auth = try std.fmt.allocPrint(a, "Bearer {s}", .{self.api_key});
 
         var resp = try self.http.send(a, .{

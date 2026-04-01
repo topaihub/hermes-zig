@@ -1,11 +1,17 @@
 const std = @import("std");
 const core_config = @import("../core/config.zig");
+const injection = @import("../security/injection.zig");
+const log = std.log.scoped(.prompt_builder);
 
 pub fn buildSystemPrompt(allocator: std.mem.Allocator, config: *const core_config.Config, soul_content: ?[]const u8) ![]u8 {
     var parts = std.ArrayList([]const u8).init(allocator);
     defer parts.deinit();
 
     if (soul_content) |soul| {
+        // Scan for injection in context content
+        if (injection.scanForInjection(soul) != null) {
+            log.warn("Injection pattern detected in soul content", .{});
+        }
         try parts.append(soul);
     } else {
         try parts.append("You are a helpful AI assistant.");

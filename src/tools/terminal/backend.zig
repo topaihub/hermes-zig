@@ -5,6 +5,7 @@ const ssh = @import("ssh.zig");
 const daytona = @import("daytona.zig");
 const singularity = @import("singularity.zig");
 const modal = @import("modal.zig");
+const persistent_shell = @import("persistent_shell.zig");
 const config = @import("../../core/config.zig");
 
 pub const ExecResult = struct {
@@ -30,6 +31,7 @@ pub const TerminalBackend = union(enum) {
     daytona: daytona.DaytonaBackend,
     singularity: singularity.SingularityBackend,
     modal: modal.ModalBackend,
+    persistent_shell: persistent_shell.PersistentShellBackend,
 
     pub fn execute(self: *TerminalBackend, allocator: std.mem.Allocator, cmd: []const u8, cwd: []const u8, timeout_ms: u64) !ExecResult {
         return switch (self.*) {
@@ -39,6 +41,7 @@ pub const TerminalBackend = union(enum) {
             .daytona => |*b| b.execute(allocator, cmd, cwd, timeout_ms),
             .singularity => |*b| b.execute(allocator, cmd, cwd, timeout_ms),
             .modal => |*b| b.execute(allocator, cmd, cwd, timeout_ms),
+            .persistent_shell => |*b| b.execute(allocator, cmd, cwd, timeout_ms),
         };
     }
 
@@ -50,6 +53,7 @@ pub const TerminalBackend = union(enum) {
             .daytona => |*b| b.cleanup(),
             .singularity => |*b| b.cleanup(),
             .modal => |*b| b.cleanup(),
+            .persistent_shell => |*b| b.cleanup(),
         };
     }
 
@@ -59,6 +63,7 @@ pub const TerminalBackend = union(enum) {
         if (std.mem.eql(u8, cfg.backend, "daytona")) return .{ .daytona = .{} };
         if (std.mem.eql(u8, cfg.backend, "singularity")) return .{ .singularity = .{} };
         if (std.mem.eql(u8, cfg.backend, "modal")) return .{ .modal = .{} };
+        if (std.mem.eql(u8, cfg.backend, "persistent_shell")) return .{ .persistent_shell = .{} };
         return .{ .local = .{} };
     }
 };

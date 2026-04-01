@@ -6,6 +6,10 @@ pub const setup = @import("setup.zig");
 pub const auth = @import("auth.zig");
 pub const profiles = @import("profiles.zig");
 pub const doctor = @import("doctor.zig");
+pub const skin = @import("skin.zig");
+pub const banner = @import("banner.zig");
+pub const status = @import("status.zig");
+pub const plugins = @import("plugins.zig");
 
 // Re-export key types
 pub const RawMode = tui.RawMode;
@@ -22,6 +26,10 @@ pub const SetupWizard = setup.SetupWizard;
 pub const AuthManager = auth.AuthManager;
 pub const ProfileManager = profiles.ProfileManager;
 pub const Doctor = doctor.Doctor;
+pub const SkinEngine = skin.SkinEngine;
+pub const renderBanner = banner.renderBanner;
+pub const StatusBar = status.StatusBar;
+pub const PluginManager = plugins.PluginManager;
 
 comptime {
     @import("std").testing.refAllDecls(@This());
