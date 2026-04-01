@@ -54,7 +54,7 @@ pub const TerminalBackend = union(enum) {
     }
 
     pub fn fromConfig(cfg: config.TerminalConfig) TerminalBackend {
-        if (std.mem.eql(u8, cfg.backend, "docker")) return .{ .docker = .{ .image = cfg.docker_image } };
+        if (std.mem.eql(u8, cfg.backend, "docker")) return .{ .docker = .{ .container = cfg.docker_image, .image = cfg.docker_image } };
         if (std.mem.eql(u8, cfg.backend, "ssh")) return .{ .ssh = .{ .host = cfg.ssh_host, .user = cfg.ssh_user, .port = cfg.ssh_port } };
         if (std.mem.eql(u8, cfg.backend, "daytona")) return .{ .daytona = .{} };
         if (std.mem.eql(u8, cfg.backend, "singularity")) return .{ .singularity = .{} };
