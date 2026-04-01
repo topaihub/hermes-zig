@@ -3,6 +3,7 @@ pub const registry = @import("registry.zig");
 pub const toolsets = @import("toolsets.zig");
 pub const terminal = @import("terminal/root.zig");
 pub const mcp = @import("mcp/root.zig");
+pub const builtin = @import("builtin/root.zig");
 
 // Re-export key types
 pub const ToolHandler = interface.ToolHandler;

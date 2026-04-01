@@ -2,7 +2,8 @@ const std = @import("std");
 const tools_interface = @import("../interface.zig");
 
 pub const TodoTool = struct {
-    items: std.ArrayList(Item),
+    allocator: std.mem.Allocator,
+    items: std.ArrayList(Item) = .{},
     next_id: i64 = 1,
 
     const Item = struct { id: i64, text: []const u8, done: bool = false };
@@ -16,12 +17,12 @@ pub const TodoTool = struct {
     };
 
     pub fn init(allocator: std.mem.Allocator) TodoTool {
-        return .{ .items = std.ArrayList(Item).init(allocator) };
+        return .{ .allocator = allocator };
     }
 
     pub fn deinit(self: *TodoTool) void {
-        for (self.items.items) |item| self.items.allocator.free(item.text);
-        self.items.deinit();
+        for (self.items.items) |item| self.allocator.free(item.text);
+        self.items.deinit(self.allocator);
     }
 
     pub fn execute(self: *TodoTool, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
@@ -33,18 +34,19 @@ pub const TodoTool = struct {
 
         if (std.mem.eql(u8, action, "add")) {
             const text = parsed.value.text orelse return error.InvalidArgs;
-            const owned = try self.items.allocator.dupe(u8, text);
+            const owned = try self.allocator.dupe(u8, text);
             const id = self.next_id;
             self.next_id += 1;
-            try self.items.append(.{ .id = id, .text = owned });
+            try self.items.append(self.allocator, .{ .id = id, .text = owned });
             return std.fmt.allocPrint(ctx.allocator, "Added todo #{d}: {s}", .{ id, text });
         }
         if (std.mem.eql(u8, action, "list")) {
-            var buf = std.ArrayList(u8).init(ctx.allocator);
+            var buf: std.ArrayList(u8) = .{};
+            defer buf.deinit(ctx.allocator);
             for (self.items.items) |item| {
-                try buf.writer().print("[{s}] #{d}: {s}\n", .{ if (item.done) "x" else " ", item.id, item.text });
+                try buf.print(ctx.allocator, "[{s}] #{d}: {s}\n", .{ if (item.done) "x" else " ", item.id, item.text });
             }
-            return if (buf.items.len > 0) try buf.toOwnedSlice() else try ctx.allocator.dupe(u8, "No todos");
+            return if (buf.items.len > 0) try buf.toOwnedSlice(ctx.allocator) else try ctx.allocator.dupe(u8, "No todos");
         }
         if (std.mem.eql(u8, action, "complete") or std.mem.eql(u8, action, "delete")) {
             const id = parsed.value.id orelse return error.InvalidArgs;
@@ -54,7 +56,7 @@ pub const TodoTool = struct {
                         item.done = true;
                         return std.fmt.allocPrint(ctx.allocator, "Completed #{d}", .{id});
                     }
-                    self.items.allocator.free(item.text);
+                    self.allocator.free(item.text);
                     _ = self.items.orderedRemove(i);
                     return std.fmt.allocPrint(ctx.allocator, "Deleted #{d}", .{id});
                 }

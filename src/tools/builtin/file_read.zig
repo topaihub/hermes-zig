@@ -24,14 +24,18 @@ pub const FileReadTool = struct {
             return content;
 
         defer ctx.allocator.free(content);
-        var lines = std.ArrayList([]const u8).init(ctx.allocator);
-        defer lines.deinit();
+        var lines: std.ArrayList([]const u8) = .{};
+        defer lines.deinit(ctx.allocator);
         var iter = std.mem.splitScalar(u8, content, '\n');
         var i: i64 = 1;
         while (iter.next()) |line| : (i += 1) {
-            if (parsed.value.start_line) |s| { if (i < s) continue; }
-            if (parsed.value.end_line) |e| { if (i > e) break; }
-            try lines.append(line);
+            if (parsed.value.start_line) |s| {
+                if (i < s) continue;
+            }
+            if (parsed.value.end_line) |e| {
+                if (i > e) break;
+            }
+            try lines.append(ctx.allocator, line);
         }
         return std.mem.join(ctx.allocator, "\n", lines.items);
     }

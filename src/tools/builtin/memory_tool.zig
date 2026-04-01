@@ -42,14 +42,15 @@ pub const MemoryTool = struct {
             var dir = std.fs.cwd().openDir(self.storage_dir, .{ .iterate = true }) catch
                 return try ctx.allocator.dupe(u8, "No memories stored");
             defer dir.close();
-            var buf = std.ArrayList(u8).init(ctx.allocator);
+            var buf: std.ArrayList(u8) = .{};
+            defer buf.deinit(ctx.allocator);
             var iter = dir.iterate();
             while (try iter.next()) |entry| {
                 if (pattern.len == 0 or std.mem.indexOf(u8, entry.name, pattern) != null) {
-                    try buf.writer().print("{s}\n", .{entry.name});
+                    try buf.print(ctx.allocator, "{s}\n", .{entry.name});
                 }
             }
-            return if (buf.items.len > 0) try buf.toOwnedSlice() else try ctx.allocator.dupe(u8, "No matches");
+            return if (buf.items.len > 0) try buf.toOwnedSlice(ctx.allocator) else try ctx.allocator.dupe(u8, "No matches");
         }
         return error.InvalidArgs;
     }
