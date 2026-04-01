@@ -4,6 +4,7 @@ pub const core = @import("core/root.zig");
 pub const llm = @import("llm/root.zig");
 pub const tools = @import("tools/root.zig");
 pub const agent = @import("agent/root.zig");
+pub const interface = @import("interface/root.zig");
 
 pub fn main() !void {
     std.debug.print("hermes-zig\n", .{});
