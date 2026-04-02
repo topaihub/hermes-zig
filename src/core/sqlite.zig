@@ -1,13 +1,17 @@
 const std = @import("std");
 const c = @cImport(@cInclude("sqlite3.h"));
 
+/// SQLITE_TRANSIENT tells SQLite to make its own copy of the data.
+/// Defined manually to avoid @cImport pointer cast issues on some platforms.
+const SQLITE_TRANSIENT: c.sqlite3_destructor_type = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
+
 pub const Error = error{SqliteError};
 
 pub const Statement = struct {
     stmt: *c.sqlite3_stmt,
 
     pub fn bindText(self: Statement, col: c_int, text: []const u8) Error!void {
-        if (c.sqlite3_bind_text(self.stmt, col, text.ptr, @intCast(text.len), c.SQLITE_TRANSIENT) != c.SQLITE_OK)
+        if (c.sqlite3_bind_text(self.stmt, col, text.ptr, @intCast(text.len), SQLITE_TRANSIENT) != c.SQLITE_OK)
             return error.SqliteError;
     }
 
