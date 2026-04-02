@@ -10,6 +10,11 @@ pub const skin = @import("skin.zig");
 pub const banner = @import("banner.zig");
 pub const status = @import("status.zig");
 pub const plugins = @import("plugins.zig");
+pub const colors = @import("colors.zig");
+pub const config_manager = @import("config_manager.zig");
+pub const model_manager = @import("model_manager.zig");
+pub const gateway_cmd = @import("gateway_cmd.zig");
+pub const env_loader = @import("env_loader.zig");
 
 // Re-export key types
 pub const RawMode = tui.RawMode;
@@ -30,6 +35,10 @@ pub const SkinEngine = skin.SkinEngine;
 pub const renderBanner = banner.renderBanner;
 pub const StatusBar = status.StatusBar;
 pub const PluginManager = plugins.PluginManager;
+pub const ConfigManager = config_manager.ConfigManager;
+pub const ModelManager = model_manager.ModelManager;
+pub const GatewayCmd = gateway_cmd.GatewayCmd;
+pub const loadDotEnv = env_loader.loadDotEnv;
 
 comptime {
     @import("std").testing.refAllDecls(@This());

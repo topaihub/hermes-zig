@@ -12,6 +12,12 @@ pub const context_references = @import("context_references.zig");
 pub const title_generator = @import("title_generator.zig");
 pub const insights = @import("insights.zig");
 pub const smart_model_routing = @import("smart_model_routing.zig");
+pub const anthropic_adapter = @import("anthropic_adapter.zig");
+pub const auxiliary_client = @import("auxiliary_client.zig");
+pub const copilot_acp_client = @import("copilot_acp_client.zig");
+pub const models_dev = @import("models_dev.zig");
+pub const skill_commands = @import("skill_commands.zig");
+pub const skill_utils = @import("skill_utils.zig");
 
 // Re-export key types
 pub const AgentLoop = loop.AgentLoop;
@@ -30,6 +36,12 @@ pub const parseReferences = context_references.parseReferences;
 pub const SessionInsights = insights.SessionInsights;
 pub const suggestModel = smart_model_routing.suggestModel;
 pub const generateTitle = title_generator.generateTitle;
+pub const getMaxOutput = anthropic_adapter.getMaxOutput;
+pub const AuxiliaryClient = auxiliary_client.AuxiliaryClient;
+pub const CopilotClient = copilot_acp_client.CopilotClient;
+pub const DevModel = models_dev.DevModel;
+pub const handleSkillCommand = skill_commands.handleSkillCommand;
+pub const parseFrontmatter = skill_utils.parseFrontmatter;
 
 comptime {
     @import("std").testing.refAllDecls(@This());
