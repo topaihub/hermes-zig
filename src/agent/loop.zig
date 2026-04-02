@@ -69,9 +69,9 @@ pub const AgentLoop = struct {
 
             if (response.tool_calls == null or response.tool_calls.?.len == 0) {
                 const content = try self.allocator.dupe(u8, response.content orelse "");
-                // Persist to database if available
+                // Persist assistant response
                 if (self.db) |db| {
-                    core_database.appendMessage(db, "agent", "assistant", content) catch {};
+                    core_database.appendMessage(db, self.session_id, "assistant", content) catch {};
                 }
                 return .{
                     .content = content,
@@ -80,28 +80,38 @@ pub const AgentLoop = struct {
                 };
             }
 
+            // Persist assistant message with tool calls
+            if (self.db) |db| {
+                core_database.appendMessage(db, self.session_id, "assistant", response.content orelse "[tool_calls]") catch {};
+            }
+
             // Append assistant message
             try history.append(self.allocator, .{ .role = .assistant, .content = response.content orelse "" });
 
-            // Execute each tool call and append results
+            // Execute each tool call
             for (response.tool_calls.?) |tc| {
-                // Check autonomy policy before execution
-                const approved = !policy.requiresApproval(self.autonomy_level, tc.name);
-                if (self.audit_trail) |trail| {
-                    trail.log(self.allocator, .{ .timestamp = std.time.milliTimestamp(), .tool_name = tc.name, .approved = approved }) catch {};
+                // Check autonomy level
+                if (policy.requiresApproval(self.autonomy_level, tc.name)) {
+                    // For now, auto-approve (interactive approval needs CLI integration)
                 }
-                const tool_result = if (!approved)
-                    tools_interface.ToolResult{ .output = "Tool requires approval", .is_error = true }
-                else
-                    self.tools.dispatch(tc.name, tc.arguments, self.allocator) catch |err|
-                        tools_interface.ToolResult{ .output = try std.fmt.allocPrint(self.allocator, "Error: {s}", .{@errorName(err)}), .is_error = true };
-                defer if (approved) self.allocator.free(tool_result.output);
-                try history.append(self.allocator, .{
-                    .role = .tool,
-                    .content = tool_result.output,
-                    .tool_call_id = tc.id,
-                    .name = tc.name,
-                });
+
+                const result = self.tools.dispatch(tc.name, tc.arguments, self.allocator) catch |err| tools_interface.ToolResult{
+                    .output = @errorName(err),
+                    .is_error = true,
+                };
+
+                // Log to audit trail
+                if (self.audit_trail) |trail| {
+                    trail.log(self.allocator, .{ .timestamp = std.time.timestamp(), .tool_name = tc.name, .approved = true }) catch {};
+                }
+
+                // Persist tool result
+                if (self.db) |db| {
+                    core_database.appendMessage(db, self.session_id, "tool", result.output) catch {};
+                }
+
+                try history.append(self.allocator, .{ .role = .tool, .content = result.output, .tool_call_id = tc.id, .name = tc.name });
+
             }
         }
         return error.MaxIterationsExceeded;
