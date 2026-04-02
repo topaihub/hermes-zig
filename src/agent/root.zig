@@ -8,6 +8,10 @@ pub const redact = @import("redact.zig");
 pub const model_metadata = @import("model_metadata.zig");
 pub const usage_pricing = @import("usage_pricing.zig");
 pub const callbacks = @import("callbacks.zig");
+pub const context_references = @import("context_references.zig");
+pub const title_generator = @import("title_generator.zig");
+pub const insights = @import("insights.zig");
+pub const smart_model_routing = @import("smart_model_routing.zig");
 
 // Re-export key types
 pub const AgentLoop = loop.AgentLoop;
@@ -21,6 +25,11 @@ pub const Trajectory = trajectory.Trajectory;
 pub const ModelInfo = model_metadata.ModelInfo;
 pub const CostResult = usage_pricing.CostResult;
 pub const CliStreamCallback = callbacks.CliStreamCallback;
+pub const Reference = context_references.Reference;
+pub const parseReferences = context_references.parseReferences;
+pub const SessionInsights = insights.SessionInsights;
+pub const suggestModel = smart_model_routing.suggestModel;
+pub const generateTitle = title_generator.generateTitle;
 
 comptime {
     @import("std").testing.refAllDecls(@This());

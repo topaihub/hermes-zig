@@ -266,6 +266,20 @@ fn handleCommand(allocator: std.mem.Allocator, input: []const u8, stdout: std.fs
         return true;
     }
 
+    if (std.mem.startsWith(u8, input, "/skills config")) {
+        try stdout.writeAll("\n  \x1b[1mSkills Configuration:\x1b[0m\n");
+        try stdout.writeAll("    Skills: place SKILL.md files in ~/.hermes/skills/\n");
+        try stdout.writeAll("    Each skill needs a SKILL.md with name, description, and triggers.\n\n");
+        return true;
+    }
+
+    if (std.mem.eql(u8, input, "/cron")) {
+        try stdout.writeAll("\n  \x1b[1mCron Scheduler:\x1b[0m\n");
+        try stdout.writeAll("    Use config.json to configure scheduled jobs.\n");
+        try stdout.writeAll("    Add a \"cron\" section with job definitions.\n\n");
+        return true;
+    }
+
     if (std.mem.eql(u8, input, "/usage")) {
         try stdout.writeAll("\n  \x1b[1mUsage:\x1b[0m\n");
         try stdout.writeAll("    Prompt tokens:     0\n");
@@ -276,14 +290,16 @@ fn handleCommand(allocator: std.mem.Allocator, input: []const u8, stdout: std.fs
 
     if (std.mem.eql(u8, input, "/help")) {
         try stdout.writeAll("\n  \x1b[1mCommands:\x1b[0m\n");
-        try stdout.writeAll("  /setup     — Configure provider, API key, model\n");
-        try stdout.writeAll("  /model     — Switch model\n");
-        try stdout.writeAll("  /config    — Show current configuration\n");
-        try stdout.writeAll("  /new       — Start new conversation\n");
-        try stdout.writeAll("  /tools     — List available tools\n");
-        try stdout.writeAll("  /skills    — List available skills\n");
-        try stdout.writeAll("  /usage     — Show token usage\n");
-        try stdout.writeAll("  /quit      — Exit\n\n");
+        try stdout.writeAll("  /setup         — Configure provider, API key, model\n");
+        try stdout.writeAll("  /model         — Switch model\n");
+        try stdout.writeAll("  /config        — Show current configuration\n");
+        try stdout.writeAll("  /new           — Start new conversation\n");
+        try stdout.writeAll("  /tools         — List available tools\n");
+        try stdout.writeAll("  /skills        — List available skills\n");
+        try stdout.writeAll("  /skills config — Configure skills directory\n");
+        try stdout.writeAll("  /cron          — Cron scheduler info\n");
+        try stdout.writeAll("  /usage         — Show token usage\n");
+        try stdout.writeAll("  /quit          — Exit\n\n");
         return true;
     }
 

@@ -6,6 +6,9 @@ pub const sqlite = @import("sqlite.zig");
 pub const database = @import("database.zig");
 pub const search = @import("search.zig");
 pub const env_loader = @import("env_loader.zig");
+pub const constants = @import("constants.zig");
+pub const time_utils = @import("time_utils.zig");
+pub const utils = @import("utils.zig");
 
 // Re-export all public declarations from types
 pub const Platform = types.Platform;

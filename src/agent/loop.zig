@@ -6,6 +6,8 @@ const core_types = @import("../core/types.zig");
 const core_config = @import("../core/config.zig");
 const core_database = @import("../core/database.zig");
 const core_sqlite = @import("../core/sqlite.zig");
+const policy = @import("../security/policy.zig");
+const audit_mod = @import("../security/audit.zig");
 
 pub const RunResult = struct {
     content: []u8,
@@ -26,6 +28,8 @@ pub const AgentLoop = struct {
     fallback_model: ?[]const u8 = null,
     interrupt_flag: ?*std.atomic.Value(bool) = null,
     db: ?core_sqlite.Database = null,
+    autonomy_level: policy.AutonomyLevel = .supervised,
+    audit_trail: ?*audit_mod.AuditTrail = null,
 
     pub fn run(self: *AgentLoop, messages: []const core_types.Message, tool_schemas: []const llm_interface.ToolSchema) !RunResult {
         var history = std.ArrayListUnmanaged(core_types.Message){};
@@ -81,9 +85,17 @@ pub const AgentLoop = struct {
 
             // Execute each tool call and append results
             for (response.tool_calls.?) |tc| {
-                const tool_result = self.tools.dispatch(tc.name, tc.arguments, self.allocator) catch |err|
-                    tools_interface.ToolResult{ .output = try std.fmt.allocPrint(self.allocator, "Error: {s}", .{@errorName(err)}), .is_error = true };
-                defer self.allocator.free(tool_result.output);
+                // Check autonomy policy before execution
+                const approved = !policy.requiresApproval(self.autonomy_level, tc.name);
+                if (self.audit_trail) |trail| {
+                    trail.log(self.allocator, .{ .timestamp = std.time.milliTimestamp(), .tool_name = tc.name, .approved = approved }) catch {};
+                }
+                const tool_result = if (!approved)
+                    tools_interface.ToolResult{ .output = "Tool requires approval", .is_error = true }
+                else
+                    self.tools.dispatch(tc.name, tc.arguments, self.allocator) catch |err|
+                        tools_interface.ToolResult{ .output = try std.fmt.allocPrint(self.allocator, "Error: {s}", .{@errorName(err)}), .is_error = true };
+                defer if (approved) self.allocator.free(tool_result.output);
                 try history.append(self.allocator, .{
                     .role = .tool,
                     .content = tool_result.output,
