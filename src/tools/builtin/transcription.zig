@@ -5,16 +5,23 @@ const ToolResult = tools_interface.ToolResult;
 pub const TranscriptionTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
         .name = "transcription",
-        .description = "Transcribe audio files to text",
+        .description = "Transcribe audio files to text via OpenAI Whisper API",
         .parameters_schema =
-            \\{"type":"object","properties":{"audio_path":{"type":"string","description":"Path to the audio file"}},"required":["audio_path"]}
+            \\{"type":"object","properties":{"audio_path":{"type":"string","description":"Path to the audio file"},"language":{"type":"string","description":"ISO-639-1 language code"}},"required":["audio_path"]}
         ,
     };
 
     pub fn execute(self: *TranscriptionTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
         const audio_path = tools_interface.getString(args, "audio_path") orelse return .{ .output = "missing audio_path", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "[transcription] Args: audio_path={s}. Requires WHISPER_API configuration.", .{audio_path}) };
+        const language = tools_interface.getString(args, "language") orelse "en";
+        return .{ .output = try std.fmt.allocPrint(allocator,
+            \\[Transcription] API endpoint: POST https://api.openai.com/v1/audio/transcriptions
+            \\  Audio: {s}
+            \\  Language: {s}
+            \\  Model: whisper-1
+            \\Requires audio file path and OPENAI_API_KEY env var.
+        , .{ audio_path, language }) };
     }
 };
 

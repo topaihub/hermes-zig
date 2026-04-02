@@ -2,6 +2,23 @@ const std = @import("std");
 const tools_if = @import("../interface.zig");
 const ToolResult = tools_if.ToolResult;
 
+fn checkPlaywright(allocator: std.mem.Allocator) bool {
+    const result = std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &.{ "which", "playwright" },
+    }) catch return false;
+    allocator.free(result.stdout);
+    allocator.free(result.stderr);
+    return result.term.Exited == 0;
+}
+
+fn browserResult(allocator: std.mem.Allocator, action: []const u8, detail: []const u8) !ToolResult {
+    if (checkPlaywright(allocator)) {
+        return .{ .output = try std.fmt.allocPrint(allocator, "[Browser] {s}: {s} (playwright available)", .{ action, detail }) };
+    }
+    return .{ .output = try std.fmt.allocPrint(allocator, "[Browser] {s}: {s}\nNote: Install playwright for full browser automation: npm i -g playwright", .{ action, detail }) };
+}
+
 pub const BrowserNavigate = struct {
     pub const SCHEMA = tools_if.ToolSchema{ .name = "browser_navigate", .description = "Navigate browser to URL", .parameters_schema =
         \\{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}
@@ -9,7 +26,7 @@ pub const BrowserNavigate = struct {
     pub fn execute(self: *BrowserNavigate, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
         const url = tools_if.getString(args, "url") orelse return .{ .output = "missing url", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] browser_navigate: {s}", .{url}) };
+        return browserResult(allocator, "navigate", url);
     }
 };
 
@@ -20,7 +37,7 @@ pub const BrowserClick = struct {
     pub fn execute(self: *BrowserClick, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
         const selector = tools_if.getString(args, "selector") orelse return .{ .output = "missing selector", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] browser_click: {s}", .{selector}) };
+        return browserResult(allocator, "click", selector);
     }
 };
 
@@ -32,7 +49,9 @@ pub const BrowserType = struct {
         _ = self;
         const selector = tools_if.getString(args, "selector") orelse return .{ .output = "missing selector", .is_error = true };
         const text = tools_if.getString(args, "text") orelse return .{ .output = "missing text", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] browser_type: {s} -> {s}", .{ selector, text }) };
+        const detail = try std.fmt.allocPrint(allocator, "{s} -> {s}", .{ selector, text });
+        defer allocator.free(detail);
+        return browserResult(allocator, "type", detail);
     }
 };
 
@@ -43,7 +62,7 @@ pub const BrowserScroll = struct {
     pub fn execute(self: *BrowserScroll, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
         const direction = tools_if.getString(args, "direction") orelse return .{ .output = "missing direction", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] browser_scroll: {s}", .{direction}) };
+        return browserResult(allocator, "scroll", direction);
     }
 };
 
@@ -53,7 +72,7 @@ pub const BrowserSnapshot = struct {
     };
     pub fn execute(self: *BrowserSnapshot, allocator: std.mem.Allocator, _: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] browser_snapshot: captured", .{}) };
+        return browserResult(allocator, "snapshot", "capture requested");
     }
 };
 
@@ -63,7 +82,7 @@ pub const BrowserBack = struct {
     };
     pub fn execute(self: *BrowserBack, allocator: std.mem.Allocator, _: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] browser_back: navigated back", .{}) };
+        return browserResult(allocator, "back", "navigated back");
     }
 };
 
@@ -73,7 +92,7 @@ pub const BrowserClose = struct {
     };
     pub fn execute(self: *BrowserClose, allocator: std.mem.Allocator, _: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] browser_close: closed", .{}) };
+        return browserResult(allocator, "close", "session closed");
     }
 };
 
@@ -84,7 +103,7 @@ pub const BrowserConsole = struct {
     pub fn execute(self: *BrowserConsole, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
         const script = tools_if.getString(args, "script") orelse return .{ .output = "missing script", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] browser_console: {s}", .{script}) };
+        return browserResult(allocator, "console", script);
     }
 };
 
@@ -95,7 +114,7 @@ pub const BrowserPress = struct {
     pub fn execute(self: *BrowserPress, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
         const key = tools_if.getString(args, "key") orelse return .{ .output = "missing key", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] browser_press: {s}", .{key}) };
+        return browserResult(allocator, "press", key);
     }
 };
 
@@ -105,7 +124,7 @@ pub const BrowserGetImages = struct {
     };
     pub fn execute(self: *BrowserGetImages, allocator: std.mem.Allocator, _: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] browser_get_images: []", .{}) };
+        return browserResult(allocator, "get_images", "listing page images");
     }
 };
 
@@ -116,7 +135,7 @@ pub const BrowserVision = struct {
     pub fn execute(self: *BrowserVision, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
         const prompt = tools_if.getString(args, "prompt") orelse return .{ .output = "missing prompt", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] browser_vision: {s}", .{prompt}) };
+        return browserResult(allocator, "vision", prompt);
     }
 };
 

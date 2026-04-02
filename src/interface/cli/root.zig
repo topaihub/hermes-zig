@@ -15,6 +15,14 @@ pub const config_manager = @import("config_manager.zig");
 pub const model_manager = @import("model_manager.zig");
 pub const gateway_cmd = @import("gateway_cmd.zig");
 pub const env_loader = @import("env_loader.zig");
+pub const auth_cmd = @import("auth_cmd.zig");
+pub const tools_config = @import("tools_config.zig");
+pub const mcp_config = @import("mcp_config.zig");
+pub const cron_cmd = @import("cron_cmd.zig");
+pub const skills_hub_cmd = @import("skills_hub_cmd.zig");
+pub const clipboard = @import("clipboard.zig");
+pub const main_entry = @import("main_entry.zig");
+pub const uninstall = @import("uninstall.zig");
 
 // Re-export key types
 pub const RawMode = tui.RawMode;
@@ -39,6 +47,15 @@ pub const ConfigManager = config_manager.ConfigManager;
 pub const ModelManager = model_manager.ModelManager;
 pub const GatewayCmd = gateway_cmd.GatewayCmd;
 pub const loadDotEnv = env_loader.loadDotEnv;
+pub const handleAuthCommand = auth_cmd.handleAuthCommand;
+pub const handleToolsCommand = tools_config.handleToolsCommand;
+pub const handleMcpCommand = mcp_config.handleMcpCommand;
+pub const handleCronCommand = cron_cmd.handleCronCommand;
+pub const handleSkillsHubCommand = skills_hub_cmd.handleSkillsHubCommand;
+pub const saveClipboardImage = clipboard.saveClipboardImage;
+pub const MainCommand = main_entry.Command;
+pub const parseSubcommand = main_entry.parseSubcommand;
+pub const handleUninstall = uninstall.handleUninstall;
 
 comptime {
     @import("std").testing.refAllDecls(@This());

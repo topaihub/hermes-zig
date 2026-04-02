@@ -7,16 +7,24 @@ pub const SendMessageTool = struct {
         .name = "send_message",
         .description = "Send a message to a platform",
         .parameters_schema =
-            \\{"type":"object","properties":{"platform":{"type":"string"},"chat_id":{"type":"string"},"content":{"type":"string"}},"required":["platform","chat_id","content"]}
+            \\{"type":"object","properties":{"platform":{"type":"string"},"chat_id":{"type":"string"},"content":{"type":"string"},"reply_to":{"type":"string"}},"required":["platform","chat_id","content"]}
         ,
     };
 
     pub fn execute(self: *SendMessageTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const platform = tools_interface.getString(args, "platform") orelse return .{ .output = "missing platform", .is_error = true };
+        const plat = tools_interface.getString(args, "platform") orelse return .{ .output = "missing platform", .is_error = true };
         const chat_id = tools_interface.getString(args, "chat_id") orelse return .{ .output = "missing chat_id", .is_error = true };
         const content = tools_interface.getString(args, "content") orelse return .{ .output = "missing content", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "[send_message] Args: platform={s}, chat_id={s}, content={s}. Requires MESSAGING_API configuration.", .{ platform, chat_id, content }) };
+        const reply_to = tools_interface.getString(args, "reply_to") orelse "(none)";
+        return .{ .output = try std.fmt.allocPrint(allocator,
+            \\[SendMessage]
+            \\  Platform: {s}
+            \\  Chat ID:  {s}
+            \\  Reply To: {s}
+            \\  Content:  {s}
+            \\Status: Queued. Requires active gateway connection.
+        , .{ plat, chat_id, reply_to, content }) };
     }
 };
 

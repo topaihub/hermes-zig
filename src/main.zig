@@ -273,10 +273,33 @@ fn handleCommand(allocator: std.mem.Allocator, input: []const u8, stdout: std.fs
         return true;
     }
 
-    if (std.mem.eql(u8, input, "/cron")) {
-        try stdout.writeAll("\n  \x1b[1mCron Scheduler:\x1b[0m\n");
-        try stdout.writeAll("    Use config.json to configure scheduled jobs.\n");
-        try stdout.writeAll("    Add a \"cron\" section with job definitions.\n\n");
+    if (std.mem.startsWith(u8, input, "/auth")) {
+        const arg = std.mem.trim(u8, input[5..], " ");
+        try @import("interface/cli/auth_cmd.zig").handleAuthCommand(allocator, arg, stdout);
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, input, "/tools config")) {
+        const arg = std.mem.trim(u8, input[13..], " ");
+        try @import("interface/cli/tools_config.zig").handleToolsCommand(allocator, arg, stdout);
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, input, "/mcp")) {
+        const arg = std.mem.trim(u8, input[4..], " ");
+        try @import("interface/cli/mcp_config.zig").handleMcpCommand(allocator, arg, stdout);
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, input, "/cron")) {
+        const arg = std.mem.trim(u8, input[5..], " ");
+        try @import("interface/cli/cron_cmd.zig").handleCronCommand(allocator, arg, stdout);
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, input, "/hub")) {
+        const arg = std.mem.trim(u8, input[4..], " ");
+        try @import("interface/cli/skills_hub_cmd.zig").handleSkillsHubCommand(allocator, arg, stdout);
         return true;
     }
 
