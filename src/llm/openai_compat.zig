@@ -129,7 +129,7 @@ pub const OpenAICompatClient = struct {
         _ = &resp;
 
         // Parse SSE from response body
-        var content_buf = std.ArrayList(u8).init(a);
+        var content_buf = std.ArrayList(u8){};
         var sse = streaming.SseParser.init(a);
         defer sse.deinit();
 
@@ -142,7 +142,7 @@ pub const OpenAICompatClient = struct {
             if (delta_obj != .object) continue;
             if (delta_obj.object.get("content")) |c| {
                 if (c == .string) {
-                    try content_buf.appendSlice(c.string);
+                    try content_buf.appendSlice(a, c.string);
                     callback.on_delta(callback.ctx, c.string, false);
                 }
             }
@@ -222,9 +222,7 @@ fn buildRequestBody(a: std.mem.Allocator, request: CompletionRequest, stream: bo
     }
 
     const val = std.json.Value{ .object = obj };
-    var buf = std.ArrayList(u8).init(a);
-    try std.json.stringify(val, .{}, buf.writer());
-    return buf.toOwnedSlice();
+    return std.json.Stringify.valueAlloc(a, val, .{});
 }
 
 test "OpenAICompatClient init and providerName" {

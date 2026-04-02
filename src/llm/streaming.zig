@@ -10,27 +10,28 @@ pub fn parseSseLine(line: []const u8) ?[]const u8 {
 }
 
 pub const SseParser = struct {
-    buffer: std.ArrayList(u8),
+    buffer: std.ArrayList(u8) = .{},
+    alloc: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) SseParser {
-        return .{ .buffer = std.ArrayList(u8).init(allocator) };
+        return .{ .alloc = allocator };
     }
 
     pub fn deinit(self: *SseParser) void {
-        self.buffer.deinit();
+        self.buffer.deinit(self.alloc);
     }
 
     /// Feed raw bytes, returns a list of complete data payloads.
     pub fn feed(self: *SseParser, bytes: []const u8, allocator: std.mem.Allocator) ![][]const u8 {
-        try self.buffer.appendSlice(bytes);
-        var results = std.ArrayList([]const u8).init(allocator);
+        try self.buffer.appendSlice(self.alloc, bytes);
+        var results = std.ArrayList([]const u8){};
 
         while (true) {
             const buf = self.buffer.items;
             const nl = std.mem.indexOf(u8, buf, "\n") orelse break;
             const line = buf[0..nl];
             if (parseSseLine(line)) |payload| {
-                try results.append(try allocator.dupe(u8, payload));
+                try results.append(allocator, try allocator.dupe(u8, payload));
             }
             // Remove consumed line including newline
             const rest = buf[nl + 1 ..];
@@ -38,7 +39,7 @@ pub const SseParser = struct {
             self.buffer.shrinkRetainingCapacity(rest.len);
         }
 
-        return results.toOwnedSlice();
+        return results.toOwnedSlice(allocator);
     }
 };
 

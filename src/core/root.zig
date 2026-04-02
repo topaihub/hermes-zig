@@ -5,6 +5,7 @@ pub const soul = @import("soul.zig");
 pub const sqlite = @import("sqlite.zig");
 pub const database = @import("database.zig");
 pub const search = @import("search.zig");
+pub const env_loader = @import("env_loader.zig");
 
 // Re-export all public declarations from types
 pub const Platform = types.Platform;
@@ -22,6 +23,9 @@ pub const ANTHROPIC_BASE_URL = types.ANTHROPIC_BASE_URL;
 // Re-export config types
 pub const Config = config.Config;
 pub const LoadedConfig = config_loader.LoadedConfig;
+
+// Re-export soul
+pub const DEFAULT_SOUL = soul.DEFAULT_SOUL;
 
 comptime {
     @import("std").testing.refAllDecls(@This());

@@ -69,8 +69,8 @@ pub const AnthropicClient = struct {
         const content_arr = root.object.get("content") orelse return response;
         if (content_arr != .array) return response;
 
-        var text_buf = std.ArrayList(u8).init(a);
-        var tool_calls = std.ArrayList(interface.ToolCall).init(a);
+        var text_buf = std.ArrayList(u8){};
+        var tool_calls = std.ArrayList(interface.ToolCall){};
 
         for (content_arr.array.items) |block| {
             if (block != .object) continue;
@@ -79,7 +79,7 @@ pub const AnthropicClient = struct {
 
             if (std.mem.eql(u8, block_type.string, "text")) {
                 if (block.object.get("text")) |t| {
-                    if (t == .string) try text_buf.appendSlice(t.string);
+                    if (t == .string) try text_buf.appendSlice(a, t.string);
                 }
             } else if (std.mem.eql(u8, block_type.string, "tool_use")) {
                 var tc = interface.ToolCall{};
@@ -90,16 +90,14 @@ pub const AnthropicClient = struct {
                     if (n == .string) tc.name = n.string;
                 }
                 if (block.object.get("input")) |input| {
-                    var buf = std.ArrayList(u8).init(a);
-                    try std.json.stringify(input, .{}, buf.writer());
-                    tc.arguments = try buf.toOwnedSlice();
+                    tc.arguments = try std.json.Stringify.valueAlloc(a, input, .{});
                 }
-                try tool_calls.append(tc);
+                try tool_calls.append(a, tc);
             }
         }
 
         if (text_buf.items.len > 0) response.content = try a.dupe(u8, text_buf.items);
-        if (tool_calls.items.len > 0) response.tool_calls = try tool_calls.toOwnedSlice();
+        if (tool_calls.items.len > 0) response.tool_calls = try tool_calls.toOwnedSlice(a);
 
         return response;
     }
@@ -123,7 +121,7 @@ pub const AnthropicClient = struct {
         });
         _ = &resp;
 
-        var content_buf = std.ArrayList(u8).init(a);
+        var content_buf = std.ArrayList(u8){};
         var sse = streaming.SseParser.init(a);
         defer sse.deinit();
 
@@ -137,7 +135,7 @@ pub const AnthropicClient = struct {
                 if (delta != .object) continue;
                 if (delta.object.get("text")) |t| {
                     if (t == .string) {
-                        try content_buf.appendSlice(t.string);
+                        try content_buf.appendSlice(a, t.string);
                         callback.on_delta(callback.ctx, t.string, false);
                     }
                 }
@@ -212,7 +210,5 @@ fn buildAnthropicBody(a: std.mem.Allocator, request: CompletionRequest, stream: 
     }
 
     const val = std.json.Value{ .object = obj };
-    var buf = std.ArrayList(u8).init(a);
-    try std.json.stringify(val, .{}, buf.writer());
-    return buf.toOwnedSlice();
+    return std.json.Stringify.valueAlloc(a, val, .{});
 }

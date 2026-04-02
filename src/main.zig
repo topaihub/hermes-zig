@@ -82,6 +82,10 @@ pub fn main() !void {
     var log = app_ctx.logger.subsystem("hermes");
     log.info("hermes agent starting", &.{});
 
+    // Load .env file if it exists
+    var env_map = try core.env_loader.loadEnvFile(allocator, ".env");
+    defer core.env_loader.deinitEnvMap(allocator, &env_map);
+
     const default_config = @embedFile("default_config.json");
 
     // Try to load existing config
@@ -116,6 +120,22 @@ pub fn main() !void {
 
     try stdout.writeAll("  Config UI: \x1b[36mhttp://127.0.0.1:8318\x1b[0m\n\n");
 
+    // Resolve LLM provider
+    var native_http = framework.NativeHttpClient.init(null);
+    var resolved_provider = llm.runtime_provider.resolveProvider(allocator, &cfg, native_http.client());
+
+    var tool_reg = tools.registry.ToolRegistry.init(allocator, &.{});
+    defer tool_reg.deinit();
+
+    // Load soul for system prompt
+    const soul_text = core.soul.loadSoul(allocator, core.soul.getHermesHome()) catch try allocator.dupe(u8, core.DEFAULT_SOUL);
+    defer allocator.free(soul_text);
+
+    // Conversation history
+    var conversation: std.ArrayList(core.Message) = .{};
+    defer conversation.deinit(allocator);
+    try conversation.append(allocator, .{ .role = .system, .content = soul_text });
+
     // Main interactive loop
     try stdout.writeAll("  Type a message to chat, or use commands:\n");
     try stdout.writeAll("  \x1b[90m/setup\x1b[0m  — Configure provider and API key\n");
@@ -138,8 +158,33 @@ pub fn main() !void {
             continue;
         }
 
-        // Chat message — would go to AgentLoop
-        try stdout.writeAll("\n  \x1b[33m⚡ Agent:\x1b[0m LLM not configured yet. Run \x1b[36m/setup\x1b[0m to configure.\n\n");
+        // Chat message
+        if (resolved_provider == null) {
+            try stdout.writeAll("\n  \x1b[33m⚡ Agent:\x1b[0m LLM not configured yet. Run \x1b[36m/setup\x1b[0m to configure.\n\n");
+            continue;
+        }
+
+        try conversation.append(allocator, .{ .role = .user, .content = try allocator.dupe(u8, input) });
+
+        const llm_client = resolved_provider.?.asLlmClient();
+        var agent_loop = agent.AgentLoop{
+            .allocator = allocator,
+            .llm = llm_client,
+            .tools = &tool_reg,
+            .config = &cfg,
+        };
+
+        var result = agent_loop.run(conversation.items, &.{}) catch |err| {
+            try writeF(stdout, allocator, "\n  \x1b[31mError:\x1b[0m {s}\n\n", .{@errorName(err)});
+            continue;
+        };
+        defer result.deinit(allocator);
+
+        try stdout.writeAll("\n  \x1b[33m⚡ Agent:\x1b[0m ");
+        try stdout.writeAll(result.content);
+        try stdout.writeAll("\n\n");
+
+        try conversation.append(allocator, .{ .role = .assistant, .content = try allocator.dupe(u8, result.content) });
     }
 
     web_server.stop();
@@ -429,9 +474,10 @@ test "Empty JSON uses all defaults" {
     try std.testing.expect(loaded.parsed.value.temperature == 0.7);
 }
 
-test "Soul loading returns null when file doesn't exist" {
+test "Soul loading returns default when file doesn't exist" {
     const result = try core.soul.loadSoul(std.testing.allocator, "nonexistent-hermes-test-dir");
-    try std.testing.expectEqual(null, result);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings(core.DEFAULT_SOUL, result);
 }
 
 test "SQLite file-based integration" {
