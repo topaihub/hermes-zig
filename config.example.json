@@ -46,6 +46,12 @@
         "injection_scanning": true
     },
 
+    "logging": {
+        "log_format": "text",
+        "log_dir": "logs",
+        "max_file_bytes": 104857600
+    },
+
     "personality": "",
     "context_files": []
 }

@@ -11,6 +11,7 @@ pub const Config = struct {
     tools: ToolsConfig = .{},
     security: SecurityConfig = .{},
     memory: MemoryConfig = .{},
+    logging: LoggingConfig = .{},
     personality: []const u8 = "",
 };
 
@@ -19,3 +20,9 @@ pub const TerminalConfig = struct { backend: []const u8 = "local", timeout_ms: u
 pub const ToolsConfig = struct { enabled_toolsets: []const []const u8 = &.{}, disabled_tools: []const []const u8 = &.{} };
 pub const SecurityConfig = struct { command_approval: bool = true, injection_scanning: bool = true };
 pub const MemoryConfig = struct { enabled: bool = true, nudge_interval: u32 = 10 };
+/// Log format: "text" (human-readable), "json" (JSONL), "both" (two files)
+pub const LoggingConfig = struct {
+    log_format: []const u8 = "text",
+    log_dir: []const u8 = "logs",
+    max_file_bytes: u64 = 100 * 1024 * 1024,
+};
