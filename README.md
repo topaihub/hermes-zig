@@ -57,6 +57,35 @@ Or open `http://127.0.0.1:8318` in your browser for the web-based config UI.
 
 ### Configuration
 
+#### Config File Location
+
+| OS | Path |
+|----|------|
+| Linux | `./config.json` (current directory) or `~/.hermes/config.json` |
+| macOS | `./config.json` (current directory) or `~/.hermes/config.json` |
+| Windows | `.\config.json` (current directory) or `%USERPROFILE%\.hermes\config.json` |
+
+hermes-zig looks for `config.json` in the **current working directory** first. If not found, it starts the setup wizard.
+
+A full example is provided in [`config.example.json`](config.example.json). Copy it to get started:
+
+```bash
+cp config.example.json config.json
+nano config.json  # Edit with your API key
+```
+
+#### Data Directory
+
+| OS | Path | Contents |
+|----|------|----------|
+| Linux | `~/.hermes/` | state.db, SOUL.md, MEMORY.md, skills/ |
+| macOS | `~/.hermes/` | state.db, SOUL.md, MEMORY.md, skills/ |
+| Windows | `%USERPROFILE%\.hermes\` | state.db, SOUL.md, MEMORY.md, skills\ |
+
+Override with `HERMES_HOME` environment variable.
+
+#### Config Example
+
 The setup wizard creates `config.json`:
 
 ```json
