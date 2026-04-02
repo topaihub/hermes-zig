@@ -43,7 +43,12 @@ pub const PlatformAdapter = struct {
     pub const VTable = struct {
         platform: *const fn (ptr: *anyopaque) types.Platform,
         connect: *const fn (ptr: *anyopaque) anyerror!void,
-        send: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, chat_id: []const u8, content: []const u8, reply_to: ?[]const u8) anyerror!SendResult,
+        disconnect: ?*const fn (ptr: *anyopaque) void = null,
+        send: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, target: []const u8, content: []const u8, reply_to: ?[]const u8) anyerror!SendResult,
+        edit_message: ?*const fn (ptr: *anyopaque, allocator: std.mem.Allocator, target: []const u8, message_id: []const u8, content: []const u8) anyerror!void = null,
+        send_typing: ?*const fn (ptr: *anyopaque, target: []const u8) anyerror!void = null,
+        send_image: ?*const fn (ptr: *anyopaque, allocator: std.mem.Allocator, target: []const u8, image_path: []const u8, caption: ?[]const u8) anyerror!SendResult = null,
+        supports_streaming: ?*const fn (ptr: *anyopaque) bool = null,
         setMessageHandler: *const fn (ptr: *anyopaque, handler: MessageHandler) void,
         deinit: *const fn (ptr: *anyopaque) void,
     };
@@ -54,8 +59,26 @@ pub const PlatformAdapter = struct {
     pub fn connect(self: PlatformAdapter) !void {
         return self.vtable.connect(self.ptr);
     }
-    pub fn send(self: PlatformAdapter, allocator: std.mem.Allocator, chat_id: []const u8, content: []const u8, reply_to: ?[]const u8) !SendResult {
-        return self.vtable.send(self.ptr, allocator, chat_id, content, reply_to);
+    pub fn disconnect(self: PlatformAdapter) void {
+        if (self.vtable.disconnect) |f| f(self.ptr);
+    }
+    pub fn send(self: PlatformAdapter, allocator: std.mem.Allocator, target: []const u8, content: []const u8, reply_to: ?[]const u8) !SendResult {
+        return self.vtable.send(self.ptr, allocator, target, content, reply_to);
+    }
+    pub fn editMessage(self: PlatformAdapter, allocator: std.mem.Allocator, target: []const u8, message_id: []const u8, content: []const u8) !void {
+        if (self.vtable.edit_message) |f| return f(self.ptr, allocator, target, message_id, content);
+        return error.NotSupported;
+    }
+    pub fn sendTyping(self: PlatformAdapter, target: []const u8) !void {
+        if (self.vtable.send_typing) |f| return f(self.ptr, target);
+    }
+    pub fn sendImage(self: PlatformAdapter, allocator: std.mem.Allocator, target: []const u8, image_path: []const u8, caption: ?[]const u8) !SendResult {
+        if (self.vtable.send_image) |f| return f(self.ptr, allocator, target, image_path, caption);
+        return error.NotSupported;
+    }
+    pub fn supportsStreaming(self: PlatformAdapter) bool {
+        if (self.vtable.supports_streaming) |f| return f(self.ptr);
+        return false;
     }
     pub fn setMessageHandler(self: PlatformAdapter, handler: MessageHandler) void {
         self.vtable.setMessageHandler(self.ptr, handler);
