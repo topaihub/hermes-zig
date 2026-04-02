@@ -28,6 +28,7 @@ pub const AgentLoop = struct {
     fallback_model: ?[]const u8 = null,
     interrupt_flag: ?*std.atomic.Value(bool) = null,
     db: ?core_sqlite.Database = null,
+    session_id: []const u8 = "default",
     autonomy_level: policy.AutonomyLevel = .supervised,
     audit_trail: ?*audit_mod.AuditTrail = null,
 
