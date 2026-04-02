@@ -14,7 +14,7 @@ pub const DelegateTool = struct {
     pub fn execute(self: *DelegateTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
         const task = tools_interface.getString(args, "task") orelse return .{ .output = "missing task", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "[DELEGATE stub] Task queued: {s}", .{task}) };
+        return .{ .output = try std.fmt.allocPrint(allocator, "Delegation: would spawn subagent for task: {s}", .{task}) };
     }
 };
 

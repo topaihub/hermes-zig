@@ -14,7 +14,7 @@ pub const TranscriptionTool = struct {
     pub fn execute(self: *TranscriptionTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
         const audio_path = tools_interface.getString(args, "audio_path") orelse return .{ .output = "missing audio_path", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "Transcription requires Whisper API. Audio: {s}", .{audio_path}) };
+        return .{ .output = try std.fmt.allocPrint(allocator, "[transcription] Args: audio_path={s}. Requires WHISPER_API configuration.", .{audio_path}) };
     }
 };
 

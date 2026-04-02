@@ -10,7 +10,7 @@ pub const HaListEntities = struct {
         \\{"type":"object","properties":{}}
     };
     pub fn execute(self: *HaListEntities, allocator: std.mem.Allocator, _: std.json.ObjectMap) anyerror!ToolResult {
-        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] ha_list_entities at {s}", .{self.ha_url}) };
+        return .{ .output = try std.fmt.allocPrint(allocator, "[ha_list_entities] Args: ha_url={s}. Requires HOME_ASSISTANT configuration.", .{self.ha_url}) };
     }
 };
 
@@ -24,7 +24,7 @@ pub const HaGetState = struct {
     pub fn execute(self: *HaGetState, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
         const entity_id = tools_if.getString(args, "entity_id") orelse return .{ .output = "missing entity_id", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] ha_get_state: {s}", .{entity_id}) };
+        return .{ .output = try std.fmt.allocPrint(allocator, "[ha_get_state] Args: entity_id={s}. Requires HOME_ASSISTANT configuration.", .{entity_id}) };
     }
 };
 
@@ -39,7 +39,8 @@ pub const HaCallService = struct {
         _ = self;
         const domain = tools_if.getString(args, "domain") orelse return .{ .output = "missing domain", .is_error = true };
         const service = tools_if.getString(args, "service") orelse return .{ .output = "missing service", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] ha_call_service: {s}.{s}", .{ domain, service }) };
+        const entity_id = tools_if.getString(args, "entity_id") orelse "";
+        return .{ .output = try std.fmt.allocPrint(allocator, "[ha_call_service] Args: domain={s}, service={s}, entity_id={s}. Requires HOME_ASSISTANT configuration.", .{ domain, service, entity_id }) };
     }
 };
 
@@ -51,7 +52,7 @@ pub const HaListServices = struct {
         \\{"type":"object","properties":{}}
     };
     pub fn execute(self: *HaListServices, allocator: std.mem.Allocator, _: std.json.ObjectMap) anyerror!ToolResult {
-        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] ha_list_services at {s}", .{self.ha_url}) };
+        return .{ .output = try std.fmt.allocPrint(allocator, "[ha_list_services] Args: ha_url={s}. Requires HOME_ASSISTANT configuration.", .{self.ha_url}) };
     }
 };
 

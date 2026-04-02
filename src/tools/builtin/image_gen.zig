@@ -14,7 +14,8 @@ pub const ImageGenTool = struct {
     pub fn execute(self: *ImageGenTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
         const prompt = tools_interface.getString(args, "prompt") orelse return .{ .output = "missing prompt", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "Image generation requires DALL-E/SD API. Prompt: {s}", .{prompt}) };
+        const size = tools_interface.getString(args, "size") orelse "1024x1024";
+        return .{ .output = try std.fmt.allocPrint(allocator, "[image_generate] Args: prompt={s}, size={s}. Requires DALL_E_API configuration.", .{ prompt, size }) };
     }
 };
 

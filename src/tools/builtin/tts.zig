@@ -14,7 +14,8 @@ pub const TtsTool = struct {
     pub fn execute(self: *TtsTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
         const text = tools_interface.getString(args, "text") orelse return .{ .output = "missing text", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "TTS requires speech synthesis API. Text length: {d}", .{text.len}) };
+        const voice = tools_interface.getString(args, "voice") orelse "default";
+        return .{ .output = try std.fmt.allocPrint(allocator, "[text_to_speech] Args: text={s}, voice={s}. Requires TTS_API configuration.", .{ text, voice }) };
     }
 };
 

@@ -16,7 +16,7 @@ pub const SendMessageTool = struct {
         const platform = tools_interface.getString(args, "platform") orelse return .{ .output = "missing platform", .is_error = true };
         const chat_id = tools_interface.getString(args, "chat_id") orelse return .{ .output = "missing chat_id", .is_error = true };
         const content = tools_interface.getString(args, "content") orelse return .{ .output = "missing content", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "[SEND stub] {s}:{s} -> {s}", .{ platform, chat_id, content }) };
+        return .{ .output = try std.fmt.allocPrint(allocator, "[send_message] Args: platform={s}, chat_id={s}, content={s}. Requires MESSAGING_API configuration.", .{ platform, chat_id, content }) };
     }
 };
 

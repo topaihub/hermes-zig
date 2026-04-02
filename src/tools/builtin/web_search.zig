@@ -14,7 +14,69 @@ pub const WebSearchTool = struct {
     pub fn execute(self: *WebSearchTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
         const query = tools_interface.getString(args, "query") orelse return .{ .output = "missing query", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "[web_search stub] No results for: {s}", .{query}) };
+        return duckduckgo(allocator, query) catch |err| {
+            return .{ .output = try std.fmt.allocPrint(allocator, "[web_search] HTTP failed ({s}), no results for: {s}", .{ @errorName(err), query }) };
+        };
+    }
+
+    fn duckduckgo(allocator: std.mem.Allocator, query: []const u8) !ToolResult {
+        const encoded = try std.Uri.Component.percent_encode(allocator, query, .{});
+        defer allocator.free(encoded);
+        const url = try std.fmt.allocPrint(allocator, "https://api.duckduckgo.com/?q={s}&format=json&no_html=1", .{encoded});
+        defer allocator.free(url);
+
+        var client: std.http.Client = .{ .allocator = allocator };
+        defer client.deinit();
+
+        var buf = std.ArrayList(u8).init(allocator);
+        defer buf.deinit();
+
+        const result = try client.fetch(.{
+            .location = .{ .url = url },
+            .response_storage = .{ .dynamic = &buf },
+        });
+
+        if (@intFromEnum(result.status) >= 400) return error.HttpError;
+
+        const body = buf.items;
+        const parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{ .ignore_unknown_fields = true }) catch
+            return .{ .output = try std.fmt.allocPrint(allocator, "[web_search] Could not parse response for: {s}", .{query}) };
+        defer parsed.deinit();
+        const root = parsed.value.object;
+
+        var out = std.ArrayList(u8).init(allocator);
+        const w = out.writer();
+
+        // AbstractText
+        if (root.get("AbstractText")) |v| {
+            if (v == .string and v.string.len > 0) {
+                try w.print("Summary: {s}\n\n", .{v.string});
+            }
+        }
+
+        // RelatedTopics
+        if (root.get("RelatedTopics")) |rt| {
+            if (rt == .array) {
+                var count: usize = 0;
+                for (rt.array.items) |item| {
+                    if (count >= 8) break;
+                    if (item != .object) continue;
+                    const text = if (item.object.get("Text")) |t| (if (t == .string) t.string else null) else null;
+                    const furl = if (item.object.get("FirstURL")) |u| (if (u == .string) u.string else null) else null;
+                    if (text) |t| {
+                        try w.print("- {s}", .{t});
+                        if (furl) |f| try w.print(" ({s})", .{f});
+                        try w.writeByte('\n');
+                        count += 1;
+                    }
+                }
+            }
+        }
+
+        if (out.items.len == 0) {
+            return .{ .output = try std.fmt.allocPrint(allocator, "[web_search] No results for: {s}", .{query}) };
+        }
+        return .{ .output = try out.toOwnedSlice() };
     }
 };
 

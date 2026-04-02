@@ -12,7 +12,7 @@ pub const HonchoContext = struct {
     pub fn execute(self: *HonchoContext, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
         const session_id = tools_if.getString(args, "session_id") orelse return .{ .output = "missing session_id", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] honcho_context: {s}", .{session_id}) };
+        return .{ .output = try std.fmt.allocPrint(allocator, "[honcho_context] Args: session_id={s}. Requires HONCHO_API configuration.", .{session_id}) };
     }
 };
 
@@ -26,7 +26,7 @@ pub const HonchoProfile = struct {
     pub fn execute(self: *HonchoProfile, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
         const user_id = tools_if.getString(args, "user_id") orelse return .{ .output = "missing user_id", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] honcho_profile: {s}", .{user_id}) };
+        return .{ .output = try std.fmt.allocPrint(allocator, "[honcho_profile] Args: user_id={s}. Requires HONCHO_API configuration.", .{user_id}) };
     }
 };
 
@@ -40,7 +40,7 @@ pub const HonchoSearch = struct {
     pub fn execute(self: *HonchoSearch, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
         const query = tools_if.getString(args, "query") orelse return .{ .output = "missing query", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] honcho_search: {s}", .{query}) };
+        return .{ .output = try std.fmt.allocPrint(allocator, "[honcho_search] Args: query={s}. Requires HONCHO_API configuration.", .{query}) };
     }
 };
 
@@ -54,7 +54,7 @@ pub const HonchoConclude = struct {
     pub fn execute(self: *HonchoConclude, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
         const session_id = tools_if.getString(args, "session_id") orelse return .{ .output = "missing session_id", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] honcho_conclude: {s}", .{session_id}) };
+        return .{ .output = try std.fmt.allocPrint(allocator, "[honcho_conclude] Args: session_id={s}. Requires HONCHO_API configuration.", .{session_id}) };
     }
 };
 

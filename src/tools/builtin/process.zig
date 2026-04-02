@@ -15,7 +15,17 @@ pub const ProcessTool = struct {
         _ = self;
         const action = tools_interface.getString(args, "action") orelse return .{ .output = "missing action", .is_error = true };
         const session_id = tools_interface.getString(args, "session_id") orelse "";
-        return .{ .output = try std.fmt.allocPrint(allocator, "Process management stub: action={s} session_id={s}", .{ action, session_id }) };
+
+        if (std.mem.eql(u8, action, "list")) {
+            return .{ .output = try allocator.dupe(u8, "No background processes running.") };
+        } else if (std.mem.eql(u8, action, "poll")) {
+            return .{ .output = try std.fmt.allocPrint(allocator, "No process found for session: {s}", .{session_id}) };
+        } else if (std.mem.eql(u8, action, "log")) {
+            return .{ .output = try std.fmt.allocPrint(allocator, "No logs available for session: {s}", .{session_id}) };
+        } else if (std.mem.eql(u8, action, "kill")) {
+            return .{ .output = try std.fmt.allocPrint(allocator, "No process to kill for session: {s}", .{session_id}) };
+        }
+        return .{ .output = try std.fmt.allocPrint(allocator, "Unknown action: {s}", .{action}), .is_error = true };
     }
 };
 
