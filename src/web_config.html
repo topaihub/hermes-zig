@@ -62,8 +62,8 @@ select:focus,input:focus{outline:none;border-color:#38bdf8}
 <button class="key-toggle" onclick="toggleKey()">show</button>
 </div>
 <label>Model</label>
-<select id="model"></select>
-<div id="custom_url_wrap" style="display:none">
+<input type="text" id="model" list="model_list" placeholder="Enter model name or select from list"><datalist id="model_list"></datalist>
+<div id="custom_url_wrap">
 <label>API Base URL</label>
 <input type="text" id="api_base_url" placeholder="https://api.example.com/v1">
 </div>
@@ -117,10 +117,9 @@ custom:['gpt-4o']
 
 function updateModels(){
 const p=document.getElementById('provider').value;
-const m=document.getElementById('model');
+const m=document.getElementById('model_list');
 m.innerHTML='';
-(models[p]||[]).forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;m.appendChild(o)});
-document.getElementById('custom_url_wrap').style.display=p==='custom'?'block':'none';
+(models[p]||[]).forEach(v=>{const o=document.createElement('option');o.value=v;m.appendChild(o)});
 }
 
 function toggleKey(){
