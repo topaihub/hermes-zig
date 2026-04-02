@@ -26,14 +26,14 @@ const config_path = "config.json";
 fn initConsole() void {
     if (builtin.os.tag == .windows) {
         const kernel32 = std.os.windows.kernel32;
-        // Set console output to UTF-8
         _ = kernel32.SetConsoleOutputCP(65001);
-        // Enable ANSI escape codes
         const handle = kernel32.GetStdHandle(std.os.windows.STD_OUTPUT_HANDLE);
-        if (handle != std.os.windows.INVALID_HANDLE_VALUE) {
-            var mode: std.os.windows.DWORD = 0;
-            if (kernel32.GetConsoleMode(handle, &mode) != 0) {
-                _ = kernel32.SetConsoleMode(handle, mode | 0x0004); // ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        if (handle) |h| {
+            if (h != std.os.windows.INVALID_HANDLE_VALUE) {
+                var mode: std.os.windows.DWORD = 0;
+                if (kernel32.GetConsoleMode(h, &mode) != 0) {
+                    _ = kernel32.SetConsoleMode(h, mode | 0x0004);
+                }
             }
         }
     }
