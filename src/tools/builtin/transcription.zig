@@ -1,5 +1,6 @@
 const std = @import("std");
 const tools_interface = @import("../interface.zig");
+const ToolResult = tools_interface.ToolResult;
 
 pub const TranscriptionTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
@@ -10,12 +11,10 @@ pub const TranscriptionTool = struct {
         ,
     };
 
-    pub fn execute(self: *TranscriptionTool, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *TranscriptionTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const parsed = std.json.parseFromSlice(struct { audio_path: []const u8 = "" }, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
-        return std.fmt.allocPrint(ctx.allocator, "Transcription requires Whisper API. Audio: {s}", .{parsed.value.audio_path});
+        const audio_path = tools_interface.getString(args, "audio_path") orelse return .{ .output = "missing audio_path", .is_error = true };
+        return .{ .output = try std.fmt.allocPrint(allocator, "Transcription requires Whisper API. Audio: {s}", .{audio_path}) };
     }
 };
 

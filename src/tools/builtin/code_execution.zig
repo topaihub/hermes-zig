@@ -1,6 +1,7 @@
 const std = @import("std");
 const tools_interface = @import("../interface.zig");
 const tools_terminal = @import("../terminal/backend.zig");
+const ToolResult = tools_interface.ToolResult;
 
 pub const CodeExecutionTool = struct {
     backend: *tools_terminal.TerminalBackend,
@@ -13,28 +14,25 @@ pub const CodeExecutionTool = struct {
         ,
     };
 
-    pub fn execute(self: *CodeExecutionTool, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
-        const Args = struct { language: []const u8, code: []const u8 };
-        const parsed = std.json.parseFromSlice(Args, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
+    pub fn execute(self: *CodeExecutionTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
+        const language = tools_interface.getString(args, "language") orelse return .{ .output = "missing language", .is_error = true };
+        const code = tools_interface.getString(args, "code") orelse return .{ .output = "missing code", .is_error = true };
 
-        const interpreter: []const u8 = if (std.mem.eql(u8, parsed.value.language, "python"))
+        const interpreter: []const u8 = if (std.mem.eql(u8, language, "python"))
             "python3"
-        else if (std.mem.eql(u8, parsed.value.language, "javascript"))
+        else if (std.mem.eql(u8, language, "javascript"))
             "node"
         else
-            return std.fmt.allocPrint(ctx.allocator, "Unsupported language: {s}", .{parsed.value.language});
+            return .{ .output = try std.fmt.allocPrint(allocator, "Unsupported language: {s}", .{language}) };
 
         const flag: []const u8 = if (std.mem.eql(u8, interpreter, "python3")) "-c" else "-e";
-        const cmd = try std.fmt.allocPrint(ctx.allocator, "{s} {s} '{s}'", .{ interpreter, flag, parsed.value.code });
-        defer ctx.allocator.free(cmd);
+        const cmd = try std.fmt.allocPrint(allocator, "{s} {s} '{s}'", .{ interpreter, flag, code });
+        defer allocator.free(cmd);
 
-        var result = try self.backend.execute(ctx.allocator, cmd, ctx.working_dir, 30000);
+        var result = try self.backend.execute(allocator, cmd, ".", 30000);
         defer result.deinit();
 
-        if (result.isSuccess()) return ctx.allocator.dupe(u8, result.stdout);
-        return ctx.allocator.dupe(u8, result.stderr);
+        return .{ .output = try allocator.dupe(u8, if (result.isSuccess()) result.stdout else result.stderr) };
     }
 };
 

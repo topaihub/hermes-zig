@@ -1,5 +1,6 @@
 const std = @import("std");
 const tools_interface = @import("../interface.zig");
+const ToolResult = tools_interface.ToolResult;
 
 pub const FileWriteTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
@@ -10,20 +11,18 @@ pub const FileWriteTool = struct {
         ,
     };
 
-    pub fn execute(self: *FileWriteTool, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *FileWriteTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const Args = struct { path: []const u8, content: []const u8 };
-        const parsed = std.json.parseFromSlice(Args, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
+        const path = tools_interface.getString(args, "path") orelse return .{ .output = "missing path", .is_error = true };
+        const content = tools_interface.getString(args, "content") orelse return .{ .output = "missing content", .is_error = true };
 
-        if (std.fs.path.dirname(parsed.value.path)) |dir| {
+        if (std.fs.path.dirname(path)) |dir| {
             std.fs.cwd().makePath(dir) catch {};
         }
-        std.fs.cwd().writeFile(.{ .sub_path = parsed.value.path, .data = parsed.value.content }) catch |e|
-            return std.fmt.allocPrint(ctx.allocator, "Error writing file: {s}", .{@errorName(e)});
+        std.fs.cwd().writeFile(.{ .sub_path = path, .data = content }) catch |e|
+            return .{ .output = try std.fmt.allocPrint(allocator, "Error writing file: {s}", .{@errorName(e)}), .is_error = true };
 
-        return std.fmt.allocPrint(ctx.allocator, "Wrote {d} bytes to {s}", .{ parsed.value.content.len, parsed.value.path });
+        return .{ .output = try std.fmt.allocPrint(allocator, "Wrote {d} bytes to {s}", .{ content.len, path }) };
     }
 };
 
@@ -39,13 +38,12 @@ test "FileWriteTool write then read" {
 
     var tool = FileWriteTool{};
     const handler = tools_interface.makeToolHandler(FileWriteTool, &tool);
-    const ctx = tools_interface.ToolContext{
-        .session_source = .{ .platform = .cli, .chat_id = "test" },
-        .allocator = std.testing.allocator,
-    };
-    const result = try handler.execute(std.fmt.comptimePrint("{{\"path\":\"{s}\",\"content\":\"hello world\"}}", .{path}), &ctx);
-    defer std.testing.allocator.free(result);
-    try std.testing.expect(std.mem.indexOf(u8, result, "Wrote") != null);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, std.fmt.comptimePrint("{{\"path\":\"{s}\",\"content\":\"hello world\"}}", .{path}), .{});
+    defer parsed.deinit();
+    const result = try handler.execute(std.testing.allocator, parsed.value.object);
+    defer std.testing.allocator.free(result.output);
+    try std.testing.expect(std.mem.indexOf(u8, result.output, "Wrote") != null);
 
     const content = try std.fs.cwd().readFileAlloc(std.testing.allocator, path, 4096);
     defer std.testing.allocator.free(content);

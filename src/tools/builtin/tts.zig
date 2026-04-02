@@ -1,5 +1,6 @@
 const std = @import("std");
 const tools_interface = @import("../interface.zig");
+const ToolResult = tools_interface.ToolResult;
 
 pub const TtsTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
@@ -10,12 +11,10 @@ pub const TtsTool = struct {
         ,
     };
 
-    pub fn execute(self: *TtsTool, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *TtsTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const parsed = std.json.parseFromSlice(struct { text: []const u8 = "", voice: []const u8 = "" }, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
-        return std.fmt.allocPrint(ctx.allocator, "TTS requires speech synthesis API. Text length: {d}", .{parsed.value.text.len});
+        const text = tools_interface.getString(args, "text") orelse return .{ .output = "missing text", .is_error = true };
+        return .{ .output = try std.fmt.allocPrint(allocator, "TTS requires speech synthesis API. Text length: {d}", .{text.len}) };
     }
 };
 

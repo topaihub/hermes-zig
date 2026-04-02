@@ -1,5 +1,6 @@
 const std = @import("std");
 const tools_interface = @import("../interface.zig");
+const ToolResult = tools_interface.ToolResult;
 
 pub const ClarifyTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
@@ -10,12 +11,10 @@ pub const ClarifyTool = struct {
         ,
     };
 
-    pub fn execute(self: *ClarifyTool, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *ClarifyTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const parsed = std.json.parseFromSlice(struct { question: []const u8 }, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
-        return std.fmt.allocPrint(ctx.allocator, "[CLARIFY] {s}", .{parsed.value.question});
+        const question = tools_interface.getString(args, "question") orelse return .{ .output = "missing question", .is_error = true };
+        return .{ .output = try std.fmt.allocPrint(allocator, "[CLARIFY] {s}", .{question}) };
     }
 };
 

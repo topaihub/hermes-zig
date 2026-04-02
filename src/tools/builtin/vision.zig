@@ -1,5 +1,6 @@
 const std = @import("std");
 const tools_interface = @import("../interface.zig");
+const ToolResult = tools_interface.ToolResult;
 
 pub const VisionTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
@@ -10,12 +11,10 @@ pub const VisionTool = struct {
         ,
     };
 
-    pub fn execute(self: *VisionTool, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *VisionTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const parsed = std.json.parseFromSlice(struct { image_path: []const u8 = "", prompt: []const u8 = "" }, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
-        return std.fmt.allocPrint(ctx.allocator, "Vision analysis requires LLM vision API. Image: {s}", .{parsed.value.image_path});
+        const image_path = tools_interface.getString(args, "image_path") orelse return .{ .output = "missing image_path", .is_error = true };
+        return .{ .output = try std.fmt.allocPrint(allocator, "Vision analysis requires LLM vision API. Image: {s}", .{image_path}) };
     }
 };
 

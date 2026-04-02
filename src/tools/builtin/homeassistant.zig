@@ -1,5 +1,6 @@
 const std = @import("std");
 const tools_if = @import("../interface.zig");
+const ToolResult = tools_if.ToolResult;
 
 pub const HaListEntities = struct {
     ha_url: []const u8 = "",
@@ -8,8 +9,8 @@ pub const HaListEntities = struct {
     pub const SCHEMA = tools_if.ToolSchema{ .name = "ha_list_entities", .description = "List all Home Assistant entities", .parameters_schema =
         \\{"type":"object","properties":{}}
     };
-    pub fn execute(self: *HaListEntities, _: []const u8, ctx: *const tools_if.ToolContext) anyerror![]const u8 {
-        return std.fmt.allocPrint(ctx.allocator, "[stub] ha_list_entities at {s}", .{self.ha_url});
+    pub fn execute(self: *HaListEntities, allocator: std.mem.Allocator, _: std.json.ObjectMap) anyerror!ToolResult {
+        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] ha_list_entities at {s}", .{self.ha_url}) };
     }
 };
 
@@ -20,12 +21,10 @@ pub const HaGetState = struct {
     pub const SCHEMA = tools_if.ToolSchema{ .name = "ha_get_state", .description = "Get state of a Home Assistant entity", .parameters_schema =
         \\{"type":"object","properties":{"entity_id":{"type":"string"}},"required":["entity_id"]}
     };
-    pub fn execute(self: *HaGetState, args_json: []const u8, ctx: *const tools_if.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *HaGetState, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const parsed = std.json.parseFromSlice(struct { entity_id: []const u8 = "" }, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
-        return std.fmt.allocPrint(ctx.allocator, "[stub] ha_get_state: {s}", .{parsed.value.entity_id});
+        const entity_id = tools_if.getString(args, "entity_id") orelse return .{ .output = "missing entity_id", .is_error = true };
+        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] ha_get_state: {s}", .{entity_id}) };
     }
 };
 
@@ -36,12 +35,11 @@ pub const HaCallService = struct {
     pub const SCHEMA = tools_if.ToolSchema{ .name = "ha_call_service", .description = "Call a Home Assistant service", .parameters_schema =
         \\{"type":"object","properties":{"domain":{"type":"string"},"service":{"type":"string"},"entity_id":{"type":"string"}},"required":["domain","service"]}
     };
-    pub fn execute(self: *HaCallService, args_json: []const u8, ctx: *const tools_if.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *HaCallService, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const parsed = std.json.parseFromSlice(struct { domain: []const u8 = "", service: []const u8 = "", entity_id: []const u8 = "" }, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
-        return std.fmt.allocPrint(ctx.allocator, "[stub] ha_call_service: {s}.{s}", .{ parsed.value.domain, parsed.value.service });
+        const domain = tools_if.getString(args, "domain") orelse return .{ .output = "missing domain", .is_error = true };
+        const service = tools_if.getString(args, "service") orelse return .{ .output = "missing service", .is_error = true };
+        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] ha_call_service: {s}.{s}", .{ domain, service }) };
     }
 };
 
@@ -52,8 +50,8 @@ pub const HaListServices = struct {
     pub const SCHEMA = tools_if.ToolSchema{ .name = "ha_list_services", .description = "List available Home Assistant services", .parameters_schema =
         \\{"type":"object","properties":{}}
     };
-    pub fn execute(self: *HaListServices, _: []const u8, ctx: *const tools_if.ToolContext) anyerror![]const u8 {
-        return std.fmt.allocPrint(ctx.allocator, "[stub] ha_list_services at {s}", .{self.ha_url});
+    pub fn execute(self: *HaListServices, allocator: std.mem.Allocator, _: std.json.ObjectMap) anyerror!ToolResult {
+        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] ha_list_services at {s}", .{self.ha_url}) };
     }
 };
 

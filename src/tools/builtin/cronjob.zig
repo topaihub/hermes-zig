@@ -1,5 +1,6 @@
 const std = @import("std");
 const tools_interface = @import("../interface.zig");
+const ToolResult = tools_interface.ToolResult;
 
 pub const CronjobTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
@@ -10,12 +11,12 @@ pub const CronjobTool = struct {
         ,
     };
 
-    pub fn execute(self: *CronjobTool, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *CronjobTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const parsed = std.json.parseFromSlice(struct { action: []const u8 = "", schedule: []const u8 = "", command: []const u8 = "" }, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
-        return std.fmt.allocPrint(ctx.allocator, "Cron: {s} - {s} - {s}", .{ parsed.value.action, parsed.value.schedule, parsed.value.command });
+        const action = tools_interface.getString(args, "action") orelse return .{ .output = "missing action", .is_error = true };
+        const schedule = tools_interface.getString(args, "schedule") orelse return .{ .output = "missing schedule", .is_error = true };
+        const command = tools_interface.getString(args, "command") orelse return .{ .output = "missing command", .is_error = true };
+        return .{ .output = try std.fmt.allocPrint(allocator, "Cron: {s} - {s} - {s}", .{ action, schedule, command }) };
     }
 };
 

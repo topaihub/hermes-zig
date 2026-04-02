@@ -1,5 +1,6 @@
 const std = @import("std");
 const tools_interface = @import("../interface.zig");
+const ToolResult = tools_interface.ToolResult;
 
 pub const SendMessageTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
@@ -10,13 +11,12 @@ pub const SendMessageTool = struct {
         ,
     };
 
-    pub fn execute(self: *SendMessageTool, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *SendMessageTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const Args = struct { platform: []const u8, chat_id: []const u8, content: []const u8 };
-        const parsed = std.json.parseFromSlice(Args, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
-        return std.fmt.allocPrint(ctx.allocator, "[SEND stub] {s}:{s} -> {s}", .{ parsed.value.platform, parsed.value.chat_id, parsed.value.content });
+        const platform = tools_interface.getString(args, "platform") orelse return .{ .output = "missing platform", .is_error = true };
+        const chat_id = tools_interface.getString(args, "chat_id") orelse return .{ .output = "missing chat_id", .is_error = true };
+        const content = tools_interface.getString(args, "content") orelse return .{ .output = "missing content", .is_error = true };
+        return .{ .output = try std.fmt.allocPrint(allocator, "[SEND stub] {s}:{s} -> {s}", .{ platform, chat_id, content }) };
     }
 };
 

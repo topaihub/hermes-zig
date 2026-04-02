@@ -1,5 +1,6 @@
 const std = @import("std");
 const tools_interface = @import("../interface.zig");
+const ToolResult = tools_interface.ToolResult;
 
 pub const MixtureOfAgentsTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
@@ -10,12 +11,10 @@ pub const MixtureOfAgentsTool = struct {
         ,
     };
 
-    pub fn execute(self: *MixtureOfAgentsTool, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *MixtureOfAgentsTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const parsed = std.json.parseFromSlice(struct { prompt: []const u8 = "" }, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
-        return std.fmt.allocPrint(ctx.allocator, "MoA stub: Would distribute prompt across models, collect responses, then synthesize via aggregator layer. Prompt: \"{s}\"", .{parsed.value.prompt});
+        const prompt = tools_interface.getString(args, "prompt") orelse return .{ .output = "missing prompt", .is_error = true };
+        return .{ .output = try std.fmt.allocPrint(allocator, "MoA stub: Would distribute prompt across models, collect responses, then synthesize via aggregator layer. Prompt: \"{s}\"", .{prompt}) };
     }
 };
 

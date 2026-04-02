@@ -1,5 +1,6 @@
 const std = @import("std");
 const tools_if = @import("../interface.zig");
+const ToolResult = tools_if.ToolResult;
 
 pub const HonchoContext = struct {
     base_url: []const u8 = "",
@@ -8,12 +9,10 @@ pub const HonchoContext = struct {
     pub const SCHEMA = tools_if.ToolSchema{ .name = "honcho_context", .description = "Get context from Honcho", .parameters_schema =
         \\{"type":"object","properties":{"session_id":{"type":"string"}},"required":["session_id"]}
     };
-    pub fn execute(self: *HonchoContext, args_json: []const u8, ctx: *const tools_if.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *HonchoContext, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const parsed = std.json.parseFromSlice(struct { session_id: []const u8 = "" }, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
-        return std.fmt.allocPrint(ctx.allocator, "[stub] honcho_context: {s}", .{parsed.value.session_id});
+        const session_id = tools_if.getString(args, "session_id") orelse return .{ .output = "missing session_id", .is_error = true };
+        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] honcho_context: {s}", .{session_id}) };
     }
 };
 
@@ -24,12 +23,10 @@ pub const HonchoProfile = struct {
     pub const SCHEMA = tools_if.ToolSchema{ .name = "honcho_profile", .description = "Get user profile from Honcho", .parameters_schema =
         \\{"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"]}
     };
-    pub fn execute(self: *HonchoProfile, args_json: []const u8, ctx: *const tools_if.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *HonchoProfile, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const parsed = std.json.parseFromSlice(struct { user_id: []const u8 = "" }, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
-        return std.fmt.allocPrint(ctx.allocator, "[stub] honcho_profile: {s}", .{parsed.value.user_id});
+        const user_id = tools_if.getString(args, "user_id") orelse return .{ .output = "missing user_id", .is_error = true };
+        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] honcho_profile: {s}", .{user_id}) };
     }
 };
 
@@ -40,12 +37,10 @@ pub const HonchoSearch = struct {
     pub const SCHEMA = tools_if.ToolSchema{ .name = "honcho_search", .description = "Search Honcho memory", .parameters_schema =
         \\{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}
     };
-    pub fn execute(self: *HonchoSearch, args_json: []const u8, ctx: *const tools_if.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *HonchoSearch, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const parsed = std.json.parseFromSlice(struct { query: []const u8 = "" }, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
-        return std.fmt.allocPrint(ctx.allocator, "[stub] honcho_search: {s}", .{parsed.value.query});
+        const query = tools_if.getString(args, "query") orelse return .{ .output = "missing query", .is_error = true };
+        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] honcho_search: {s}", .{query}) };
     }
 };
 
@@ -56,12 +51,10 @@ pub const HonchoConclude = struct {
     pub const SCHEMA = tools_if.ToolSchema{ .name = "honcho_conclude", .description = "Conclude a Honcho session", .parameters_schema =
         \\{"type":"object","properties":{"session_id":{"type":"string"}},"required":["session_id"]}
     };
-    pub fn execute(self: *HonchoConclude, args_json: []const u8, ctx: *const tools_if.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *HonchoConclude, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const parsed = std.json.parseFromSlice(struct { session_id: []const u8 = "" }, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
-        return std.fmt.allocPrint(ctx.allocator, "[stub] honcho_conclude: {s}", .{parsed.value.session_id});
+        const session_id = tools_if.getString(args, "session_id") orelse return .{ .output = "missing session_id", .is_error = true };
+        return .{ .output = try std.fmt.allocPrint(allocator, "[stub] honcho_conclude: {s}", .{session_id}) };
     }
 };
 

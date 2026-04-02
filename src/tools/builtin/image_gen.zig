@@ -1,5 +1,6 @@
 const std = @import("std");
 const tools_interface = @import("../interface.zig");
+const ToolResult = tools_interface.ToolResult;
 
 pub const ImageGenTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
@@ -10,12 +11,10 @@ pub const ImageGenTool = struct {
         ,
     };
 
-    pub fn execute(self: *ImageGenTool, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *ImageGenTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const parsed = std.json.parseFromSlice(struct { prompt: []const u8 = "", size: []const u8 = "" }, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
-        return std.fmt.allocPrint(ctx.allocator, "Image generation requires DALL-E/SD API. Prompt: {s}", .{parsed.value.prompt});
+        const prompt = tools_interface.getString(args, "prompt") orelse return .{ .output = "missing prompt", .is_error = true };
+        return .{ .output = try std.fmt.allocPrint(allocator, "Image generation requires DALL-E/SD API. Prompt: {s}", .{prompt}) };
     }
 };
 

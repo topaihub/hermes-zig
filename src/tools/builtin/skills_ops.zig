@@ -1,5 +1,6 @@
 const std = @import("std");
 const tools_interface = @import("../interface.zig");
+const ToolResult = tools_interface.ToolResult;
 
 const skills_base = "/.hermes/skills/";
 
@@ -20,17 +21,16 @@ pub const SkillsList = struct {
         ,
     };
 
-    pub fn execute(self: *SkillsList, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *SkillsList, allocator: std.mem.Allocator, _: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        _ = args_json;
-        const dir_path = try getSkillsDir(ctx.allocator, ctx.working_dir);
-        defer ctx.allocator.free(dir_path);
+        const dir_path = try getSkillsDir(allocator, ".");
+        defer allocator.free(dir_path);
 
         var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch
-            return std.fmt.allocPrint(ctx.allocator, "No skills directory found at {s}", .{dir_path});
+            return .{ .output = try std.fmt.allocPrint(allocator, "No skills directory found at {s}", .{dir_path}) };
 
         defer dir.close();
-        var result = std.ArrayList(u8).init(ctx.allocator);
+        var result = std.ArrayList(u8).init(allocator);
         var iter = dir.iterate();
         while (try iter.next()) |entry| {
             if (entry.kind == .directory) {
@@ -38,8 +38,8 @@ pub const SkillsList = struct {
                 try result.append('\n');
             }
         }
-        if (result.items.len == 0) return std.fmt.allocPrint(ctx.allocator, "No skills found in {s}", .{dir_path});
-        return result.toOwnedSlice();
+        if (result.items.len == 0) return .{ .output = try std.fmt.allocPrint(allocator, "No skills found in {s}", .{dir_path}) };
+        return .{ .output = try result.toOwnedSlice() };
     }
 };
 
@@ -52,19 +52,17 @@ pub const SkillView = struct {
         ,
     };
 
-    pub fn execute(self: *SkillView, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *SkillView, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const parsed = std.json.parseFromSlice(struct { skill_name: []const u8 = "" }, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
+        const skill_name = tools_interface.getString(args, "skill_name") orelse return .{ .output = "missing skill_name", .is_error = true };
 
-        const dir_path = try getSkillsDir(ctx.allocator, ctx.working_dir);
-        defer ctx.allocator.free(dir_path);
-        const path = try std.fmt.allocPrint(ctx.allocator, "{s}{s}/SKILL.md", .{ dir_path, parsed.value.skill_name });
-        defer ctx.allocator.free(path);
+        const dir_path = try getSkillsDir(allocator, ".");
+        defer allocator.free(dir_path);
+        const path = try std.fmt.allocPrint(allocator, "{s}{s}/SKILL.md", .{ dir_path, skill_name });
+        defer allocator.free(path);
 
-        return std.fs.cwd().readFileAlloc(ctx.allocator, path, 1024 * 1024) catch
-            return std.fmt.allocPrint(ctx.allocator, "Skill not found: {s}", .{parsed.value.skill_name});
+        return .{ .output = std.fs.cwd().readFileAlloc(allocator, path, 1024 * 1024) catch
+            return .{ .output = try std.fmt.allocPrint(allocator, "Skill not found: {s}", .{skill_name}) } };
     }
 };
 
@@ -77,31 +75,31 @@ pub const SkillManage = struct {
         ,
     };
 
-    pub fn execute(self: *SkillManage, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *SkillManage, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const parsed = std.json.parseFromSlice(struct { action: []const u8 = "", name: []const u8 = "", content: []const u8 = "" }, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
+        const action = tools_interface.getString(args, "action") orelse return .{ .output = "missing action", .is_error = true };
+        const name = tools_interface.getString(args, "name") orelse return .{ .output = "missing name", .is_error = true };
+        const content = tools_interface.getString(args, "content") orelse "";
 
-        const dir_path = try getSkillsDir(ctx.allocator, ctx.working_dir);
-        defer ctx.allocator.free(dir_path);
-        const skill_dir = try std.fmt.allocPrint(ctx.allocator, "{s}{s}", .{ dir_path, parsed.value.name });
-        defer ctx.allocator.free(skill_dir);
-        const skill_file = try std.fmt.allocPrint(ctx.allocator, "{s}/SKILL.md", .{skill_dir});
-        defer ctx.allocator.free(skill_file);
+        const dir_path = try getSkillsDir(allocator, ".");
+        defer allocator.free(dir_path);
+        const skill_dir = try std.fmt.allocPrint(allocator, "{s}{s}", .{ dir_path, name });
+        defer allocator.free(skill_dir);
+        const skill_file = try std.fmt.allocPrint(allocator, "{s}/SKILL.md", .{skill_dir});
+        defer allocator.free(skill_file);
 
-        if (std.mem.eql(u8, parsed.value.action, "delete")) {
+        if (std.mem.eql(u8, action, "delete")) {
             std.fs.cwd().deleteTree(skill_dir) catch |e|
-                return std.fmt.allocPrint(ctx.allocator, "Error deleting skill: {s}", .{@errorName(e)});
-            return std.fmt.allocPrint(ctx.allocator, "Deleted skill: {s}", .{parsed.value.name});
+                return .{ .output = try std.fmt.allocPrint(allocator, "Error deleting skill: {s}", .{@errorName(e)}), .is_error = true };
+            return .{ .output = try std.fmt.allocPrint(allocator, "Deleted skill: {s}", .{name}) };
         }
 
         std.fs.cwd().makePath(skill_dir) catch |e|
-            return std.fmt.allocPrint(ctx.allocator, "Error creating directory: {s}", .{@errorName(e)});
-        std.fs.cwd().writeFile(.{ .sub_path = skill_file, .data = parsed.value.content }) catch |e|
-            return std.fmt.allocPrint(ctx.allocator, "Error writing skill: {s}", .{@errorName(e)});
+            return .{ .output = try std.fmt.allocPrint(allocator, "Error creating directory: {s}", .{@errorName(e)}), .is_error = true };
+        std.fs.cwd().writeFile(.{ .sub_path = skill_file, .data = content }) catch |e|
+            return .{ .output = try std.fmt.allocPrint(allocator, "Error writing skill: {s}", .{@errorName(e)}), .is_error = true };
 
-        return std.fmt.allocPrint(ctx.allocator, "Skill {s}d: {s}", .{ parsed.value.action, parsed.value.name });
+        return .{ .output = try std.fmt.allocPrint(allocator, "Skill {s}d: {s}", .{ action, name }) };
     }
 };
 

@@ -1,5 +1,6 @@
 const std = @import("std");
 const tools_interface = @import("../interface.zig");
+const ToolResult = tools_interface.ToolResult;
 
 pub const ProcessTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
@@ -10,12 +11,11 @@ pub const ProcessTool = struct {
         ,
     };
 
-    pub fn execute(self: *ProcessTool, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *ProcessTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const parsed = std.json.parseFromSlice(struct { action: []const u8 = "", session_id: []const u8 = "" }, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
-        return std.fmt.allocPrint(ctx.allocator, "Process management stub: action={s} session_id={s}", .{ parsed.value.action, parsed.value.session_id });
+        const action = tools_interface.getString(args, "action") orelse return .{ .output = "missing action", .is_error = true };
+        const session_id = tools_interface.getString(args, "session_id") orelse "";
+        return .{ .output = try std.fmt.allocPrint(allocator, "Process management stub: action={s} session_id={s}", .{ action, session_id }) };
     }
 };
 

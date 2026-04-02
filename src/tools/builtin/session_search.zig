@@ -1,5 +1,6 @@
 const std = @import("std");
 const tools_interface = @import("../interface.zig");
+const ToolResult = tools_interface.ToolResult;
 
 pub const SessionSearchTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
@@ -10,12 +11,11 @@ pub const SessionSearchTool = struct {
         ,
     };
 
-    pub fn execute(self: *SessionSearchTool, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *SessionSearchTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const parsed = std.json.parseFromSlice(struct { query: []const u8 = "", limit: u32 = 10 }, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
-        return std.fmt.allocPrint(ctx.allocator, "Session search stub: query=\"{s}\" limit={d}. Requires database connection.", .{ parsed.value.query, parsed.value.limit });
+        const query = tools_interface.getString(args, "query") orelse return .{ .output = "missing query", .is_error = true };
+        const limit = tools_interface.getInt(args, "limit") orelse 10;
+        return .{ .output = try std.fmt.allocPrint(allocator, "Session search stub: query=\"{s}\" limit={d}. Requires database connection.", .{ query, limit }) };
     }
 };
 

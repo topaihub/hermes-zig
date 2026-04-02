@@ -81,16 +81,12 @@ pub const AgentLoop = struct {
 
             // Execute each tool call and append results
             for (response.tool_calls.?) |tc| {
-                const tool_ctx = tools_interface.ToolContext{
-                    .session_source = .{ .platform = .cli, .chat_id = "agent" },
-                    .allocator = self.allocator,
-                };
-                const result = self.tools.dispatch(tc.name, tc.arguments, &tool_ctx) catch |err|
-                    try std.fmt.allocPrint(self.allocator, "Error: {s}", .{@errorName(err)});
-                defer self.allocator.free(result);
+                const tool_result = self.tools.dispatch(tc.name, tc.arguments, self.allocator) catch |err|
+                    tools_interface.ToolResult{ .output = try std.fmt.allocPrint(self.allocator, "Error: {s}", .{@errorName(err)}), .is_error = true };
+                defer self.allocator.free(tool_result.output);
                 try history.append(self.allocator, .{
                     .role = .tool,
-                    .content = result,
+                    .content = tool_result.output,
                     .tool_call_id = tc.id,
                     .name = tc.name,
                 });

@@ -1,5 +1,6 @@
 const std = @import("std");
 const tools_interface = @import("../interface.zig");
+const ToolResult = tools_interface.ToolResult;
 
 pub const FileReadTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
@@ -10,34 +11,33 @@ pub const FileReadTool = struct {
         ,
     };
 
-    pub fn execute(self: *FileReadTool, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *FileReadTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const Args = struct { path: []const u8, start_line: ?i64 = null, end_line: ?i64 = null };
-        const parsed = std.json.parseFromSlice(Args, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
+        const path = tools_interface.getString(args, "path") orelse return .{ .output = "missing path", .is_error = true };
+        const start_line = tools_interface.getInt(args, "start_line");
+        const end_line = tools_interface.getInt(args, "end_line");
 
-        const content = std.fs.cwd().readFileAlloc(ctx.allocator, parsed.value.path, 10 * 1024 * 1024) catch |e|
-            return std.fmt.allocPrint(ctx.allocator, "Error reading file: {s}", .{@errorName(e)});
+        const content = std.fs.cwd().readFileAlloc(allocator, path, 10 * 1024 * 1024) catch |e|
+            return .{ .output = try std.fmt.allocPrint(allocator, "Error reading file: {s}", .{@errorName(e)}) };
 
-        if (parsed.value.start_line == null and parsed.value.end_line == null)
-            return content;
+        if (start_line == null and end_line == null)
+            return .{ .output = content };
 
-        defer ctx.allocator.free(content);
+        defer allocator.free(content);
         var lines: std.ArrayList([]const u8) = .{};
-        defer lines.deinit(ctx.allocator);
+        defer lines.deinit(allocator);
         var iter = std.mem.splitScalar(u8, content, '\n');
         var i: i64 = 1;
         while (iter.next()) |line| : (i += 1) {
-            if (parsed.value.start_line) |s| {
+            if (start_line) |s| {
                 if (i < s) continue;
             }
-            if (parsed.value.end_line) |e| {
+            if (end_line) |e| {
                 if (i > e) break;
             }
-            try lines.append(ctx.allocator, line);
+            try lines.append(allocator, line);
         }
-        return std.mem.join(ctx.allocator, "\n", lines.items);
+        return .{ .output = try std.mem.join(allocator, "\n", lines.items) };
     }
 };
 
@@ -54,11 +54,10 @@ test "FileReadTool read file" {
 
     var tool = FileReadTool{};
     const handler = tools_interface.makeToolHandler(FileReadTool, &tool);
-    const ctx = tools_interface.ToolContext{
-        .session_source = .{ .platform = .cli, .chat_id = "test" },
-        .allocator = std.testing.allocator,
-    };
-    const result = try handler.execute(std.fmt.comptimePrint("{{\"path\":\"{s}\"}}", .{path}), &ctx);
-    defer std.testing.allocator.free(result);
-    try std.testing.expect(std.mem.indexOf(u8, result, "line1") != null);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, std.fmt.comptimePrint("{{\"path\":\"{s}\"}}", .{path}), .{});
+    defer parsed.deinit();
+    const result = try handler.execute(std.testing.allocator, parsed.value.object);
+    defer std.testing.allocator.free(result.output);
+    try std.testing.expect(std.mem.indexOf(u8, result.output, "line1") != null);
 }

@@ -1,5 +1,6 @@
 const std = @import("std");
 const tools_interface = @import("../interface.zig");
+const ToolResult = tools_interface.ToolResult;
 
 pub const VoiceModeTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
@@ -10,12 +11,10 @@ pub const VoiceModeTool = struct {
         ,
     };
 
-    pub fn execute(self: *VoiceModeTool, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *VoiceModeTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const parsed = std.json.parseFromSlice(struct { action: []const u8 = "" }, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
-        return std.fmt.allocPrint(ctx.allocator, "Voice mode requires audio I/O. Action: {s}", .{parsed.value.action});
+        const action = tools_interface.getString(args, "action") orelse return .{ .output = "missing action", .is_error = true };
+        return .{ .output = try std.fmt.allocPrint(allocator, "Voice mode requires audio I/O. Action: {s}", .{action}) };
     }
 };
 

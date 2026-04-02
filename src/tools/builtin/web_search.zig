@@ -1,5 +1,6 @@
 const std = @import("std");
 const tools_interface = @import("../interface.zig");
+const ToolResult = tools_interface.ToolResult;
 
 pub const WebSearchTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
@@ -10,12 +11,10 @@ pub const WebSearchTool = struct {
         ,
     };
 
-    pub fn execute(self: *WebSearchTool, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *WebSearchTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const parsed = std.json.parseFromSlice(struct { query: []const u8 }, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
-        return std.fmt.allocPrint(ctx.allocator, "[web_search stub] No results for: {s}", .{parsed.value.query});
+        const query = tools_interface.getString(args, "query") orelse return .{ .output = "missing query", .is_error = true };
+        return .{ .output = try std.fmt.allocPrint(allocator, "[web_search stub] No results for: {s}", .{query}) };
     }
 };
 
@@ -28,12 +27,10 @@ pub const WebExtractTool = struct {
         ,
     };
 
-    pub fn execute(self: *WebExtractTool, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *WebExtractTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const parsed = std.json.parseFromSlice(struct { url: []const u8 }, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
-        return std.fmt.allocPrint(ctx.allocator, "Extracted content from: {s}", .{parsed.value.url});
+        const url = tools_interface.getString(args, "url") orelse return .{ .output = "missing url", .is_error = true };
+        return .{ .output = try std.fmt.allocPrint(allocator, "Extracted content from: {s}", .{url}) };
     }
 };
 

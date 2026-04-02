@@ -1,6 +1,7 @@
 const std = @import("std");
 const tools_interface = @import("../interface.zig");
 const terminal = @import("../terminal/backend.zig");
+const ToolResult = tools_interface.ToolResult;
 
 pub const FileTools = struct {
     backend: *terminal.TerminalBackend,
@@ -13,27 +14,23 @@ pub const FileTools = struct {
         ,
     };
 
-    pub fn execute(self: *FileTools, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
-        const Args = struct { operation: []const u8, path: []const u8, pattern: ?[]const u8 = null };
-        const parsed = std.json.parseFromSlice(Args, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
+    pub fn execute(self: *FileTools, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
+        const op = tools_interface.getString(args, "operation") orelse return .{ .output = "missing operation", .is_error = true };
+        const p = tools_interface.getString(args, "path") orelse return .{ .output = "missing path", .is_error = true };
+        const pat = tools_interface.getString(args, "pattern") orelse "";
 
         const cmd = blk: {
-            const op = parsed.value.operation;
-            const p = parsed.value.path;
-            const pat = parsed.value.pattern orelse "";
-            if (std.mem.eql(u8, op, "ls")) break :blk try std.fmt.allocPrint(ctx.allocator, "ls -la {s}", .{p});
-            if (std.mem.eql(u8, op, "find")) break :blk try std.fmt.allocPrint(ctx.allocator, "find {s} -name '{s}'", .{ p, pat });
-            if (std.mem.eql(u8, op, "grep")) break :blk try std.fmt.allocPrint(ctx.allocator, "grep -rn '{s}' {s}", .{ pat, p });
-            if (std.mem.eql(u8, op, "tree")) break :blk try std.fmt.allocPrint(ctx.allocator, "find {s} -print | head -100", .{p});
-            break :blk try std.fmt.allocPrint(ctx.allocator, "echo 'Unknown operation: {s}'", .{op});
+            if (std.mem.eql(u8, op, "ls")) break :blk try std.fmt.allocPrint(allocator, "ls -la {s}", .{p});
+            if (std.mem.eql(u8, op, "find")) break :blk try std.fmt.allocPrint(allocator, "find {s} -name '{s}'", .{ p, pat });
+            if (std.mem.eql(u8, op, "grep")) break :blk try std.fmt.allocPrint(allocator, "grep -rn '{s}' {s}", .{ pat, p });
+            if (std.mem.eql(u8, op, "tree")) break :blk try std.fmt.allocPrint(allocator, "find {s} -print | head -100", .{p});
+            break :blk try std.fmt.allocPrint(allocator, "echo 'Unknown operation: {s}'", .{op});
         };
-        defer ctx.allocator.free(cmd);
+        defer allocator.free(cmd);
 
-        var result = try self.backend.execute(ctx.allocator, cmd, ctx.working_dir, 15000);
+        var result = try self.backend.execute(allocator, cmd, ".", 15000);
         defer result.deinit();
-        return ctx.allocator.dupe(u8, if (result.isSuccess()) result.stdout else result.stderr);
+        return .{ .output = try allocator.dupe(u8, if (result.isSuccess()) result.stdout else result.stderr) };
     }
 };
 

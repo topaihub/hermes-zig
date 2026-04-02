@@ -13,18 +13,47 @@ pub const ToolContext = struct {
     allocator: std.mem.Allocator,
 };
 
+pub const ToolResult = struct {
+    output: []const u8,
+    is_error: bool = false,
+};
+
+pub fn getString(args: std.json.ObjectMap, key: []const u8) ?[]const u8 {
+    const val = args.get(key) orelse return null;
+    return switch (val) {
+        .string => |s| s,
+        else => null,
+    };
+}
+
+pub fn getBool(args: std.json.ObjectMap, key: []const u8) ?bool {
+    const val = args.get(key) orelse return null;
+    return switch (val) {
+        .bool => |b| b,
+        else => null,
+    };
+}
+
+pub fn getInt(args: std.json.ObjectMap, key: []const u8) ?i64 {
+    const val = args.get(key) orelse return null;
+    return switch (val) {
+        .integer => |i| i,
+        else => null,
+    };
+}
+
 pub const ToolHandler = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
     schema: ToolSchema,
 
     pub const VTable = struct {
-        execute: *const fn (ptr: *anyopaque, args_json: []const u8, ctx: *const ToolContext) anyerror![]const u8,
+        execute: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult,
         deinit: *const fn (ptr: *anyopaque) void,
     };
 
-    pub fn execute(self: ToolHandler, args_json: []const u8, ctx: *const ToolContext) ![]const u8 {
-        return self.vtable.execute(self.ptr, args_json, ctx);
+    pub fn execute(self: ToolHandler, allocator: std.mem.Allocator, args: std.json.ObjectMap) !ToolResult {
+        return self.vtable.execute(self.ptr, allocator, args);
     }
 
     pub fn deinit(self: ToolHandler) void {
@@ -46,9 +75,9 @@ pub fn makeToolHandler(comptime T: type, instance: *T) ToolHandler {
         .schema = T.SCHEMA,
         .vtable = &comptime .{
             .execute = struct {
-                fn f(ptr: *anyopaque, args: []const u8, ctx: *const ToolContext) anyerror![]const u8 {
+                fn f(ptr: *anyopaque, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
                     const self: *T = @ptrCast(@alignCast(ptr));
-                    return self.execute(args, ctx);
+                    return self.execute(allocator, args);
                 }
             }.f,
             .deinit = struct {
@@ -73,9 +102,9 @@ test "makeToolHandler compiles with valid tool struct" {
             .parameters_schema = "{}",
         };
 
-        pub fn execute(self: *@This(), _: []const u8, _: *const ToolContext) anyerror![]const u8 {
+        pub fn execute(self: *@This(), _: std.mem.Allocator, _: std.json.ObjectMap) anyerror!ToolResult {
             _ = self;
-            return "ok";
+            return .{ .output = "ok" };
         }
     };
 
@@ -83,10 +112,8 @@ test "makeToolHandler compiles with valid tool struct" {
     const handler = makeToolHandler(TestTool, &tool);
     try std.testing.expectEqualStrings("test_tool", handler.schema.name);
 
-    const ctx = ToolContext{
-        .session_source = .{ .platform = .cli, .chat_id = "test" },
-        .allocator = std.testing.allocator,
-    };
-    const result = try handler.execute("{}", &ctx);
-    try std.testing.expectEqualStrings("ok", result);
+    var empty = std.json.ObjectMap.init(std.testing.allocator);
+    defer empty.deinit();
+    const result = try handler.execute(std.testing.allocator, empty);
+    try std.testing.expectEqualStrings("ok", result.output);
 }

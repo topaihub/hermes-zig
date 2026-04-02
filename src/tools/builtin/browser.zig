@@ -1,5 +1,6 @@
 const std = @import("std");
 const tools_interface = @import("../interface.zig");
+const ToolResult = tools_interface.ToolResult;
 
 pub const BrowserTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{
@@ -10,12 +11,11 @@ pub const BrowserTool = struct {
         ,
     };
 
-    pub fn execute(self: *BrowserTool, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
+    pub fn execute(self: *BrowserTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
-        const parsed = std.json.parseFromSlice(struct { url: []const u8 = "", action: []const u8 = "" }, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
-        return std.fmt.allocPrint(ctx.allocator, "Browser automation requires headless browser. URL: {s}, Action: {s}", .{ parsed.value.url, parsed.value.action });
+        const url = tools_interface.getString(args, "url") orelse return .{ .output = "missing url", .is_error = true };
+        const action = tools_interface.getString(args, "action") orelse return .{ .output = "missing action", .is_error = true };
+        return .{ .output = try std.fmt.allocPrint(allocator, "Browser automation requires headless browser. URL: {s}, Action: {s}", .{ url, action }) };
     }
 };
 

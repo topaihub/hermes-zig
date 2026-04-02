@@ -2,7 +2,7 @@ const std = @import("std");
 const interface = @import("interface.zig");
 const ToolHandler = interface.ToolHandler;
 const ToolSchema = interface.ToolSchema;
-const ToolContext = interface.ToolContext;
+const ToolResult = interface.ToolResult;
 
 pub const ToolRegistry = struct {
     static_tools: []const ToolHandler,
@@ -22,15 +22,23 @@ pub const ToolRegistry = struct {
         try self.dynamic.put(handler.schema.name, handler);
     }
 
-    pub fn dispatch(self: *ToolRegistry, name: []const u8, args_json: []const u8, ctx: *const ToolContext) ![]const u8 {
+    pub fn dispatch(self: *ToolRegistry, name: []const u8, args_json: []const u8, allocator: std.mem.Allocator) !ToolResult {
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, args_json, .{}) catch
+            return .{ .output = "Invalid JSON arguments", .is_error = true };
+        defer parsed.deinit();
+        const args = switch (parsed.value) {
+            .object => |obj| obj,
+            else => return .{ .output = "Arguments must be JSON object", .is_error = true },
+        };
+
         // Static first (no lock needed, immutable)
         for (self.static_tools) |h| {
-            if (std.mem.eql(u8, h.schema.name, name)) return h.execute(args_json, ctx);
+            if (std.mem.eql(u8, h.schema.name, name)) return h.execute(allocator, args);
         }
         // Dynamic second (read lock)
         self.lock.lockShared();
         defer self.lock.unlockShared();
-        if (self.dynamic.get(name)) |h| return h.execute(args_json, ctx);
+        if (self.dynamic.get(name)) |h| return h.execute(allocator, args);
         return error.ToolNotFound;
     }
 
@@ -54,14 +62,14 @@ pub const ToolRegistry = struct {
 test "ToolRegistry dispatch: static first, dynamic second" {
     const StaticTool = struct {
         pub const SCHEMA = ToolSchema{ .name = "echo", .description = "static echo", .parameters_schema = "{}" };
-        pub fn execute(_: *@This(), _: []const u8, _: *const ToolContext) anyerror![]const u8 {
-            return "static";
+        pub fn execute(_: *@This(), _: std.mem.Allocator, _: std.json.ObjectMap) anyerror!ToolResult {
+            return .{ .output = "static" };
         }
     };
     const DynTool = struct {
         pub const SCHEMA = ToolSchema{ .name = "echo", .description = "dynamic echo", .parameters_schema = "{}" };
-        pub fn execute(_: *@This(), _: []const u8, _: *const ToolContext) anyerror![]const u8 {
-            return "dynamic";
+        pub fn execute(_: *@This(), _: std.mem.Allocator, _: std.json.ObjectMap) anyerror!ToolResult {
+            return .{ .output = "dynamic" };
         }
     };
 
@@ -73,14 +81,9 @@ test "ToolRegistry dispatch: static first, dynamic second" {
     var dt = DynTool{};
     try reg.registerDynamic(interface.makeToolHandler(DynTool, &dt));
 
-    const ctx = ToolContext{
-        .session_source = .{ .platform = .cli, .chat_id = "t" },
-        .allocator = std.testing.allocator,
-    };
-
     // Static wins over dynamic with same name
-    const result = try reg.dispatch("echo", "{}", &ctx);
-    try std.testing.expectEqualStrings("static", result);
+    const result = try reg.dispatch("echo", "{}", std.testing.allocator);
+    try std.testing.expectEqualStrings("static", result.output);
 
     // collectSchemas returns both
     const schemas = try reg.collectSchemas(std.testing.allocator);
@@ -91,9 +94,5 @@ test "ToolRegistry dispatch: static first, dynamic second" {
 test "ToolRegistry dispatch returns error for unknown tool" {
     var reg = ToolRegistry.init(std.testing.allocator, &.{});
     defer reg.deinit();
-    const ctx = ToolContext{
-        .session_source = .{ .platform = .cli, .chat_id = "t" },
-        .allocator = std.testing.allocator,
-    };
-    try std.testing.expectError(error.ToolNotFound, reg.dispatch("nonexistent", "{}", &ctx));
+    try std.testing.expectError(error.ToolNotFound, reg.dispatch("nonexistent", "{}", std.testing.allocator));
 }

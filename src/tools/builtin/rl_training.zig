@@ -1,23 +1,13 @@
 const std = @import("std");
 const tools_interface = @import("../interface.zig");
-
-fn stubExecute(comptime name: []const u8, comptime desc: []const u8) fn (*anyopaque, []const u8, *const tools_interface.ToolContext) anyerror![]const u8 {
-    return struct {
-        fn f(self: *anyopaque, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
-            _ = self;
-            _ = args_json;
-            return std.fmt.allocPrint(ctx.allocator, "[Tinker-Atropos] {s}: {s}", .{ name, desc });
-        }
-    }.f;
-}
+const ToolResult = tools_interface.ToolResult;
 
 fn rlTool(comptime name: []const u8, comptime desc: []const u8, comptime schema: []const u8) type {
     return struct {
         pub const SCHEMA = tools_interface.ToolSchema{ .name = name, .description = desc, .parameters_schema = schema };
-        pub fn execute(self: *@This(), args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
+        pub fn execute(self: *@This(), allocator: std.mem.Allocator, _: std.json.ObjectMap) anyerror!ToolResult {
             _ = self;
-            _ = args_json;
-            return std.fmt.allocPrint(ctx.allocator, "[Tinker-Atropos] {s}: {s}", .{ name, desc });
+            return .{ .output = try std.fmt.allocPrint(allocator, "[Tinker-Atropos] {s}: {s}", .{ name, desc }) };
         }
     };
 }

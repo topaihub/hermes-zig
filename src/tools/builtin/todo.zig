@@ -1,5 +1,6 @@
 const std = @import("std");
 const tools_interface = @import("../interface.zig");
+const ToolResult = tools_interface.ToolResult;
 
 pub const TodoTool = struct {
     allocator: std.mem.Allocator,
@@ -25,45 +26,41 @@ pub const TodoTool = struct {
         self.items.deinit(self.allocator);
     }
 
-    pub fn execute(self: *TodoTool, args_json: []const u8, ctx: *const tools_interface.ToolContext) anyerror![]const u8 {
-        const Args = struct { action: []const u8, text: ?[]const u8 = null, id: ?i64 = null };
-        const parsed = std.json.parseFromSlice(Args, ctx.allocator, args_json, .{ .ignore_unknown_fields = true }) catch
-            return error.InvalidArgs;
-        defer parsed.deinit();
-        const action = parsed.value.action;
+    pub fn execute(self: *TodoTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
+        const action = tools_interface.getString(args, "action") orelse return .{ .output = "missing action", .is_error = true };
 
         if (std.mem.eql(u8, action, "add")) {
-            const text = parsed.value.text orelse return error.InvalidArgs;
+            const text = tools_interface.getString(args, "text") orelse return .{ .output = "missing text", .is_error = true };
             const owned = try self.allocator.dupe(u8, text);
             const id = self.next_id;
             self.next_id += 1;
             try self.items.append(self.allocator, .{ .id = id, .text = owned });
-            return std.fmt.allocPrint(ctx.allocator, "Added todo #{d}: {s}", .{ id, text });
+            return .{ .output = try std.fmt.allocPrint(allocator, "Added todo #{d}: {s}", .{ id, text }) };
         }
         if (std.mem.eql(u8, action, "list")) {
             var buf: std.ArrayList(u8) = .{};
-            defer buf.deinit(ctx.allocator);
+            defer buf.deinit(allocator);
             for (self.items.items) |item| {
-                try buf.print(ctx.allocator, "[{s}] #{d}: {s}\n", .{ if (item.done) "x" else " ", item.id, item.text });
+                try buf.print(allocator, "[{s}] #{d}: {s}\n", .{ if (item.done) "x" else " ", item.id, item.text });
             }
-            return if (buf.items.len > 0) try buf.toOwnedSlice(ctx.allocator) else try ctx.allocator.dupe(u8, "No todos");
+            return .{ .output = if (buf.items.len > 0) try buf.toOwnedSlice(allocator) else try allocator.dupe(u8, "No todos") };
         }
         if (std.mem.eql(u8, action, "complete") or std.mem.eql(u8, action, "delete")) {
-            const id = parsed.value.id orelse return error.InvalidArgs;
+            const id = tools_interface.getInt(args, "id") orelse return .{ .output = "missing id", .is_error = true };
             for (self.items.items, 0..) |*item, i| {
                 if (item.id == id) {
                     if (std.mem.eql(u8, action, "complete")) {
                         item.done = true;
-                        return std.fmt.allocPrint(ctx.allocator, "Completed #{d}", .{id});
+                        return .{ .output = try std.fmt.allocPrint(allocator, "Completed #{d}", .{id}) };
                     }
                     self.allocator.free(item.text);
                     _ = self.items.orderedRemove(i);
-                    return std.fmt.allocPrint(ctx.allocator, "Deleted #{d}", .{id});
+                    return .{ .output = try std.fmt.allocPrint(allocator, "Deleted #{d}", .{id}) };
                 }
             }
-            return std.fmt.allocPrint(ctx.allocator, "Todo #{d} not found", .{id});
+            return .{ .output = try std.fmt.allocPrint(allocator, "Todo #{d} not found", .{id}) };
         }
-        return error.InvalidArgs;
+        return .{ .output = "unknown action", .is_error = true };
     }
 };
 
