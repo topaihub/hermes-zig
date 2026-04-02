@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const framework = @import("framework");
 pub const core = @import("core/root.zig");
 pub const llm = @import("llm/root.zig");
@@ -11,14 +12,32 @@ pub const web_server_mod = @import("web_server.zig");
 
 const banner =
     \\
-    \\  ╦ ╦┌─┐┬─┐┌┬┐┌─┐┌─┐  ╔═╗┌─┐┌─┐┌┐┌┌┬┐
-    \\  ╠═╣├┤ ├┬┘│││├┤ └─┐  ╠═╣│ ┬├┤ │││ │
-    \\  ╩ ╩└─┘┴└─┴ ┴└─┘└─┘  ╩ ╩└─┘└─┘┘└┘ ┴
-    \\  ── Zig Edition ──
+    \\  _  _ ___ ___ __  __ ___ ___
+    \\ | || | __| _ \  \/  | __/ __|
+    \\ | __ | _||   / |\/| | _|\__ \
+    \\ |_||_|___|_|_\_|  |_|___|___/
+    \\       A G E N T  (Zig Edition)
     \\
 ;
 
 const config_path = "config.json";
+
+/// Enable UTF-8 and ANSI on Windows console
+fn initConsole() void {
+    if (builtin.os.tag == .windows) {
+        const kernel32 = std.os.windows.kernel32;
+        // Set console output to UTF-8
+        _ = kernel32.SetConsoleOutputCP(65001);
+        // Enable ANSI escape codes
+        const handle = kernel32.GetStdHandle(std.os.windows.STD_OUTPUT_HANDLE);
+        if (handle != std.os.windows.INVALID_HANDLE_VALUE) {
+            var mode: std.os.windows.DWORD = 0;
+            if (kernel32.GetConsoleMode(handle, &mode) != 0) {
+                _ = kernel32.SetConsoleMode(handle, mode | 0x0004); // ENABLE_VIRTUAL_TERMINAL_PROCESSING
+            }
+        }
+    }
+}
 
 fn readLine(stdin: std.fs.File, buf: []u8) !?[]const u8 {
     var i: usize = 0;
@@ -38,6 +57,7 @@ fn writeF(stdout: std.fs.File, allocator: std.mem.Allocator, comptime fmt: []con
 }
 
 pub fn main() !void {
+    initConsole();
     const stdout = std.fs.File.stdout();
     const stdin = std.fs.File.stdin();
 
