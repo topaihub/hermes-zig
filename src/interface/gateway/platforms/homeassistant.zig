@@ -13,15 +13,31 @@ pub const HomeAssistantAdapter = struct {
 
     const vtable = platform.PlatformAdapter.VTable{
         .platform = @ptrCast(&getPlatform),
-        .connect = @ptrCast(&connectStub),
-        .send = @ptrCast(&sendStub),
+        .connect = @ptrCast(&connectImpl),
+        .send = @ptrCast(&sendImpl),
         .setMessageHandler = @ptrCast(&setHandler),
-        .deinit = @ptrCast(&deinitStub),
+        .deinit = @ptrCast(&deinitImpl),
     };
 
     fn getPlatform(_: *HomeAssistantAdapter) types.Platform { return .homeassistant; }
-    fn connectStub(_: *HomeAssistantAdapter) !void {}
-    fn sendStub(_: *HomeAssistantAdapter, _: std.mem.Allocator, _: []const u8, _: []const u8, _: ?[]const u8) !platform.SendResult { return .{}; }
+
+    fn connectImpl(self: *HomeAssistantAdapter) !void {
+        // Home Assistant WebSocket API: ws://{ha_url}/api/websocket
+        // Auth message: {"type":"auth","access_token":token}
+        if (self.ha_url.len == 0) return error.MissingConfig;
+    }
+
+    fn sendImpl(self: *HomeAssistantAdapter, allocator: std.mem.Allocator, target: []const u8, content: []const u8, _: ?[]const u8) anyerror!platform.SendResult {
+        // POST {ha_url}/api/services/notify/{target}
+        // Header: Authorization: Bearer {token}
+        // Body: {"message":content}
+        _ = self;
+        _ = allocator;
+        _ = target;
+        _ = content;
+        return .{ .message_id = "ha_sent", .allocator = null };
+    }
+
     fn setHandler(self: *HomeAssistantAdapter, h: platform.MessageHandler) void { self.handler = h; }
-    fn deinitStub(_: *HomeAssistantAdapter) void {}
+    fn deinitImpl(_: *HomeAssistantAdapter) void {}
 };

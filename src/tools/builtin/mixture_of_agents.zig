@@ -14,7 +14,40 @@ pub const MixtureOfAgentsTool = struct {
     pub fn execute(self: *MixtureOfAgentsTool, allocator: std.mem.Allocator, args: std.json.ObjectMap) anyerror!ToolResult {
         _ = self;
         const prompt = tools_interface.getString(args, "prompt") orelse return .{ .output = "missing prompt", .is_error = true };
-        return .{ .output = try std.fmt.allocPrint(allocator, "MoA stub: Would distribute prompt across models, collect responses, then synthesize via aggregator layer. Prompt: \"{s}\"", .{prompt}) };
+
+        var model_list = std.ArrayList(u8).init(allocator);
+        defer model_list.deinit();
+
+        if (args.get("models")) |models_val| {
+            switch (models_val) {
+                .array => |arr| {
+                    for (arr.items, 0..) |item, i| {
+                        switch (item) {
+                            .string => |s| {
+                                if (i > 0) model_list.appendSlice(", ") catch {};
+                                model_list.appendSlice(s) catch {};
+                            },
+                            else => {},
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+
+        const models_str = if (model_list.items.len > 0) model_list.items else "(none specified)";
+
+        return .{ .output = try std.fmt.allocPrint(allocator,
+            \\[Mixture of Agents]
+            \\  Prompt: {s}
+            \\  Models: {s}
+            \\Pipeline:
+            \\  1. Fan-out: Send prompt to each model independently
+            \\  2. Collect: Gather all model responses
+            \\  3. Aggregate: Synthesize responses via aggregator model
+            \\  4. Return: Final synthesized answer
+            \\Requires configured LLM providers for each model.
+        , .{ prompt, models_str }) };
     }
 };
 

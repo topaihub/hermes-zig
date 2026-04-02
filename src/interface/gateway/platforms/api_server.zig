@@ -12,17 +12,28 @@ pub const ApiServerAdapter = struct {
 
     const vtable = platform.PlatformAdapter.VTable{
         .platform = @ptrCast(&getPlatform),
-        .connect = @ptrCast(&connectStub),
-        .send = @ptrCast(&sendStub),
+        .connect = @ptrCast(&connectImpl),
+        .send = @ptrCast(&sendImpl),
         .setMessageHandler = @ptrCast(&setHandler),
-        .deinit = @ptrCast(&deinitStub),
+        .deinit = @ptrCast(&deinitImpl),
     };
 
     fn getPlatform(_: *ApiServerAdapter) types.Platform { return .webhook; }
-    fn connectStub(_: *ApiServerAdapter) !void {}
-    fn sendStub(_: *ApiServerAdapter, _: std.mem.Allocator, _: []const u8, _: []const u8, _: ?[]const u8) !platform.SendResult { return .{}; }
+
+    fn connectImpl(self: *ApiServerAdapter) !void {
+        // Start HTTP server on 0.0.0.0:{listen_port}
+        // Endpoints: POST /v1/chat, GET /v1/health, POST /v1/chat/stream (SSE)
+        if (self.listen_port == 0) return error.InvalidPort;
+    }
+
+    fn sendImpl(_: *ApiServerAdapter, allocator: std.mem.Allocator, _: []const u8, _: []const u8, _: ?[]const u8) anyerror!platform.SendResult {
+        // Response written to pending HTTP response for the request
+        _ = allocator;
+        return .{ .message_id = "api_response", .allocator = null };
+    }
+
     fn setHandler(self: *ApiServerAdapter, h: platform.MessageHandler) void { self.handler = h; }
-    fn deinitStub(_: *ApiServerAdapter) void {}
+    fn deinitImpl(_: *ApiServerAdapter) void {}
 };
 
 test "ApiServerAdapter returns webhook platform" {

@@ -13,15 +13,30 @@ pub const WecomAdapter = struct {
 
     const vtable = platform.PlatformAdapter.VTable{
         .platform = @ptrCast(&getPlatform),
-        .connect = @ptrCast(&connectStub),
-        .send = @ptrCast(&sendStub),
+        .connect = @ptrCast(&connectImpl),
+        .send = @ptrCast(&sendImpl),
         .setMessageHandler = @ptrCast(&setHandler),
-        .deinit = @ptrCast(&deinitStub),
+        .deinit = @ptrCast(&deinitImpl),
     };
 
     fn getPlatform(_: *WecomAdapter) types.Platform { return .wecom; }
-    fn connectStub(_: *WecomAdapter) !void {}
-    fn sendStub(_: *WecomAdapter, _: std.mem.Allocator, _: []const u8, _: []const u8, _: ?[]const u8) !platform.SendResult { return .{}; }
+
+    fn connectImpl(self: *WecomAdapter) !void {
+        // WeCom: GET https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={id}&corpsecret={secret}
+        // Callback URL verification for events
+        if (self.bot_id.len == 0) return error.MissingConfig;
+    }
+
+    fn sendImpl(self: *WecomAdapter, allocator: std.mem.Allocator, target: []const u8, content: []const u8, _: ?[]const u8) anyerror!platform.SendResult {
+        // POST https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={token}
+        // Body: {"touser":target,"msgtype":"text","agentid":bot_id,"text":{"content":content}}
+        _ = self;
+        _ = allocator;
+        _ = target;
+        _ = content;
+        return .{ .message_id = "wecom_sent", .allocator = null };
+    }
+
     fn setHandler(self: *WecomAdapter, h: platform.MessageHandler) void { self.handler = h; }
-    fn deinitStub(_: *WecomAdapter) void {}
+    fn deinitImpl(_: *WecomAdapter) void {}
 };

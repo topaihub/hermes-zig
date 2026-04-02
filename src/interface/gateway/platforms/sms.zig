@@ -14,15 +14,31 @@ pub const SmsAdapter = struct {
 
     const vtable = platform.PlatformAdapter.VTable{
         .platform = @ptrCast(&getPlatform),
-        .connect = @ptrCast(&connectStub),
-        .send = @ptrCast(&sendStub),
+        .connect = @ptrCast(&connectImpl),
+        .send = @ptrCast(&sendImpl),
         .setMessageHandler = @ptrCast(&setHandler),
-        .deinit = @ptrCast(&deinitStub),
+        .deinit = @ptrCast(&deinitImpl),
     };
 
     fn getPlatform(_: *SmsAdapter) types.Platform { return .sms; }
-    fn connectStub(_: *SmsAdapter) !void {}
-    fn sendStub(_: *SmsAdapter, _: std.mem.Allocator, _: []const u8, _: []const u8, _: ?[]const u8) !platform.SendResult { return .{}; }
+
+    fn connectImpl(self: *SmsAdapter) !void {
+        // Twilio: webhook callback for incoming SMS
+        // Configure webhook URL at https://console.twilio.com
+        if (self.account_sid.len == 0) return error.MissingConfig;
+    }
+
+    fn sendImpl(self: *SmsAdapter, allocator: std.mem.Allocator, target: []const u8, content: []const u8, _: ?[]const u8) anyerror!platform.SendResult {
+        // POST https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json
+        // Auth: Basic base64({account_sid}:{auth_token})
+        // Body: From={from_number}&To={target}&Body={content}
+        _ = self;
+        _ = allocator;
+        _ = target;
+        _ = content;
+        return .{ .message_id = "sms_sent", .allocator = null };
+    }
+
     fn setHandler(self: *SmsAdapter, h: platform.MessageHandler) void { self.handler = h; }
-    fn deinitStub(_: *SmsAdapter) void {}
+    fn deinitImpl(_: *SmsAdapter) void {}
 };

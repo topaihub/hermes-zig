@@ -43,7 +43,7 @@ comptime {
 test "all 14 adapters return correct platform enum" {
     const TestCase = struct { adapter: platform.PlatformAdapter, expected: types.Platform };
 
-    var tg = TelegramAdapter{};
+    var tg = TelegramAdapter{ .bot_token = "" };
     var dc = DiscordAdapter{ .bot_token = "", .guild_id = "" };
     var sl = SlackAdapter{ .bot_token = "", .signing_secret = "" };
     var wa = WhatsAppAdapter{ .phone_number_id = "", .access_token = "" };

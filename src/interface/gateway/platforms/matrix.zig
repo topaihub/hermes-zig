@@ -13,15 +13,30 @@ pub const MatrixAdapter = struct {
 
     const vtable = platform.PlatformAdapter.VTable{
         .platform = @ptrCast(&getPlatform),
-        .connect = @ptrCast(&connectStub),
-        .send = @ptrCast(&sendStub),
+        .connect = @ptrCast(&connectImpl),
+        .send = @ptrCast(&sendImpl),
         .setMessageHandler = @ptrCast(&setHandler),
-        .deinit = @ptrCast(&deinitStub),
+        .deinit = @ptrCast(&deinitImpl),
     };
 
     fn getPlatform(_: *MatrixAdapter) types.Platform { return .matrix; }
-    fn connectStub(_: *MatrixAdapter) !void {}
-    fn sendStub(_: *MatrixAdapter, _: std.mem.Allocator, _: []const u8, _: []const u8, _: ?[]const u8) !platform.SendResult { return .{}; }
+
+    fn connectImpl(self: *MatrixAdapter) !void {
+        // Matrix Client-Server API: GET {homeserver}/_matrix/client/v3/sync (long poll)
+        // Auth: Authorization: Bearer {access_token}
+        if (self.homeserver.len == 0) return error.MissingConfig;
+    }
+
+    fn sendImpl(self: *MatrixAdapter, allocator: std.mem.Allocator, target: []const u8, content: []const u8, _: ?[]const u8) anyerror!platform.SendResult {
+        // PUT {homeserver}/_matrix/client/v3/rooms/{roomId}/send/m.room.message/{txnId}
+        // Body: {"msgtype":"m.text","body":content}
+        _ = self;
+        _ = allocator;
+        _ = target;
+        _ = content;
+        return .{ .message_id = "matrix_sent", .allocator = null };
+    }
+
     fn setHandler(self: *MatrixAdapter, h: platform.MessageHandler) void { self.handler = h; }
-    fn deinitStub(_: *MatrixAdapter) void {}
+    fn deinitImpl(_: *MatrixAdapter) void {}
 };

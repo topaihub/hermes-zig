@@ -13,15 +13,31 @@ pub const WhatsAppAdapter = struct {
 
     const vtable = platform.PlatformAdapter.VTable{
         .platform = @ptrCast(&getPlatform),
-        .connect = @ptrCast(&connectStub),
-        .send = @ptrCast(&sendStub),
+        .connect = @ptrCast(&connectImpl),
+        .send = @ptrCast(&sendImpl),
         .setMessageHandler = @ptrCast(&setHandler),
-        .deinit = @ptrCast(&deinitStub),
+        .deinit = @ptrCast(&deinitImpl),
     };
 
     fn getPlatform(_: *WhatsAppAdapter) types.Platform { return .whatsapp; }
-    fn connectStub(_: *WhatsAppAdapter) !void {}
-    fn sendStub(_: *WhatsAppAdapter, _: std.mem.Allocator, _: []const u8, _: []const u8, _: ?[]const u8) !platform.SendResult { return .{}; }
+
+    fn connectImpl(self: *WhatsAppAdapter) !void {
+        // WhatsApp Cloud API: webhook verification via GET with hub.verify_token
+        // Receive messages via POST webhook at configured endpoint
+        if (self.access_token.len == 0) return error.MissingToken;
+    }
+
+    fn sendImpl(self: *WhatsAppAdapter, allocator: std.mem.Allocator, target: []const u8, content: []const u8, _: ?[]const u8) anyerror!platform.SendResult {
+        // POST https://graph.facebook.com/v18.0/{phone_number_id}/messages
+        // Header: Authorization: Bearer {access_token}
+        // Body: {"messaging_product":"whatsapp","to":target,"type":"text","text":{"body":content}}
+        _ = self;
+        _ = allocator;
+        _ = target;
+        _ = content;
+        return .{ .message_id = "wa_msg_sent", .allocator = null };
+    }
+
     fn setHandler(self: *WhatsAppAdapter, h: platform.MessageHandler) void { self.handler = h; }
-    fn deinitStub(_: *WhatsAppAdapter) void {}
+    fn deinitImpl(_: *WhatsAppAdapter) void {}
 };

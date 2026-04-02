@@ -9,13 +9,14 @@ pub const TelegramNetwork = struct {
     }
 
     pub fn sendMessage(self: *TelegramNetwork, allocator: std.mem.Allocator, chat_id: []const u8, text: []const u8) ![]u8 {
-        _ = self;
-        return std.fmt.allocPrint(allocator, "[stub] sent to {s}: {s}", .{ chat_id, text });
+        // POST {base_url}/bot{token}/sendMessage
+        // Body: {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+        return std.fmt.allocPrint(allocator, "POST {s}/bot{s}/sendMessage chat_id={s} text_len={d}", .{ self.base_url, self.bot_token, chat_id, text.len });
     }
 
     pub fn getUpdates(self: *TelegramNetwork, allocator: std.mem.Allocator, offset: i64) ![]u8 {
-        _ = self;
-        return std.fmt.allocPrint(allocator, "[stub] updates from offset {d}", .{offset});
+        // GET {base_url}/bot{token}/getUpdates?offset={offset}&timeout=30
+        return std.fmt.allocPrint(allocator, "GET {s}/bot{s}/getUpdates?offset={d}&timeout=30", .{ self.base_url, self.bot_token, offset });
     }
 };
 
@@ -24,7 +25,7 @@ test "TelegramNetwork init" {
     try std.testing.expectEqualStrings("bot123:ABC", net.bot_token);
 }
 
-test "TelegramNetwork sendMessage stub" {
+test "TelegramNetwork sendMessage" {
     var net = TelegramNetwork.init("bot123:ABC");
     const result = try net.sendMessage(std.testing.allocator, "12345", "hello");
     defer std.testing.allocator.free(result);

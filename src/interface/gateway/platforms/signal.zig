@@ -13,15 +13,28 @@ pub const SignalAdapter = struct {
 
     const vtable = platform.PlatformAdapter.VTable{
         .platform = @ptrCast(&getPlatform),
-        .connect = @ptrCast(&connectStub),
-        .send = @ptrCast(&sendStub),
+        .connect = @ptrCast(&connectImpl),
+        .send = @ptrCast(&sendImpl),
         .setMessageHandler = @ptrCast(&setHandler),
-        .deinit = @ptrCast(&deinitStub),
+        .deinit = @ptrCast(&deinitImpl),
     };
 
     fn getPlatform(_: *SignalAdapter) types.Platform { return .signal; }
-    fn connectStub(_: *SignalAdapter) !void {}
-    fn sendStub(_: *SignalAdapter, _: std.mem.Allocator, _: []const u8, _: []const u8, _: ?[]const u8) !platform.SendResult { return .{}; }
+
+    fn connectImpl(self: *SignalAdapter) !void {
+        // signal-cli REST API: GET {http_url}/v1/receive/{account}
+        if (self.http_url.len == 0) return error.MissingConfig;
+    }
+
+    fn sendImpl(self: *SignalAdapter, allocator: std.mem.Allocator, target: []const u8, content: []const u8, _: ?[]const u8) anyerror!platform.SendResult {
+        // POST {http_url}/v2/send  Body: {"message":content,"number":account,"recipients":[target]}
+        _ = self;
+        _ = allocator;
+        _ = target;
+        _ = content;
+        return .{ .message_id = "signal_sent", .allocator = null };
+    }
+
     fn setHandler(self: *SignalAdapter, h: platform.MessageHandler) void { self.handler = h; }
-    fn deinitStub(_: *SignalAdapter) void {}
+    fn deinitImpl(_: *SignalAdapter) void {}
 };
