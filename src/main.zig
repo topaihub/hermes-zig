@@ -8,6 +8,7 @@ pub const agent = @import("agent/root.zig");
 pub const interface = @import("interface/root.zig");
 pub const intelligence = @import("intelligence/root.zig");
 pub const security = @import("security/root.zig");
+pub const logging = @import("logging/root.zig");
 pub const web_server_mod = @import("web_server.zig");
 
 const banner =
@@ -66,6 +67,20 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     try stdout.writeAll("\x1b[36m" ++ banner ++ "\x1b[0m\n");
+
+    // Init framework AppContext with rotating file logging
+    var app_ctx = try framework.AppContext.init(allocator, .{});
+    defer app_ctx.deinit();
+
+    var rotating_sink = logging.RotatingFileSink.init(allocator, "logs", "hermes");
+    defer rotating_sink.deinit();
+    const original_sink = app_ctx.logger.sink;
+    var file_multi = try framework.MultiSink.init(allocator, &.{ original_sink, rotating_sink.asLogSink() });
+    defer file_multi.deinit();
+    app_ctx.logger.sink = file_multi.asLogSink();
+
+    var log = app_ctx.logger.subsystem("hermes");
+    log.info("hermes agent starting", &.{});
 
     // Try to load existing config
     var cfg = blk: {
