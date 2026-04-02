@@ -7,6 +7,11 @@ pub fn build(b: *std.Build) void {
     const framework_dep = b.dependency("framework", .{ .target = target, .optimize = optimize });
     const framework_mod = framework_dep.module("framework");
 
+    // Vendored SQLite — no system dependency needed
+    const sqlite3_dep = b.dependency("sqlite3", .{ .target = target, .optimize = optimize });
+    const sqlite3_lib = sqlite3_dep.artifact("sqlite3");
+    sqlite3_lib.root_module.addCMacro("SQLITE_ENABLE_FTS5", "1");
+
     const exe = b.addExecutable(.{
         .name = "hermes-zig",
         .root_module = b.createModule(.{
@@ -17,7 +22,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{.{ .name = "framework", .module = framework_mod }},
         }),
     });
-    exe.root_module.linkSystemLibrary("sqlite3", .{});
+    exe.linkLibrary(sqlite3_lib);
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -34,6 +39,6 @@ pub fn build(b: *std.Build) void {
             .imports = &.{.{ .name = "framework", .module = framework_mod }},
         }),
     });
-    tests.root_module.linkSystemLibrary("sqlite3", .{});
+    tests.linkLibrary(sqlite3_lib);
     b.step("test", "Run unit tests").dependOn(&b.addRunArtifact(tests).step);
 }

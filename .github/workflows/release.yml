@@ -49,14 +49,6 @@ jobs:
       - name: Install Zig ${{ env.ZIG_VERSION }}
         run: bash .github/scripts/install-zig.sh "${ZIG_VERSION}"
 
-      - name: Install SQLite (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
-
-      - name: Install SQLite (macOS)
-        if: runner.os == 'macOS'
-        run: brew install sqlite3
-
       - name: Build ReleaseSmall
         run: zig build -Dtarget=${{ matrix.zig_target }} -Doptimize=ReleaseSmall
 
