@@ -25,3 +25,4 @@ Before writing any code, read the relevant documents:
 - JSON config with `std.json`, no YAML
 - Each module has `root.zig` with `refAllDecls` test
 - Tools must have `pub const SCHEMA: ToolSchema` and `pub fn execute(...)` — validated at comptime
+- **Tests: NEVER hardcode `/tmp/` paths.** Use `:memory:` for SQLite, relative paths, or `std.testing.tmpDir()`. Must work on Linux, macOS, and Windows.
