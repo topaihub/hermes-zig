@@ -72,17 +72,14 @@ test "Empty JSON uses all defaults" {
 }
 
 test "Soul loading returns null when file doesn't exist" {
-    const result = try core.soul.loadSoul(std.testing.allocator, "/tmp/nonexistent-hermes-test-dir");
+    const result = try core.soul.loadSoul(std.testing.allocator, "nonexistent-hermes-test-dir");
     try std.testing.expectEqual(null, result);
 }
 
 test "SQLite file-based integration" {
-    const path = "/tmp/_hermes_test.db";
-    const db = try core.sqlite.Database.open(path);
-    defer {
-        db.close();
-        std.fs.cwd().deleteFile(path) catch {};
-    }
+    // Use in-memory database for cross-platform compatibility (no /tmp on Windows)
+    const db = try core.sqlite.Database.open(":memory:");
+    defer db.close();
     try core.database.initSchema(db);
     try core.database.createSession(db, "test-1", "cli", "gpt-4");
     try core.database.appendMessage(db, "test-1", "user", "hello");

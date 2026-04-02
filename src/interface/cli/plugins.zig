@@ -41,6 +41,6 @@ test "PluginManager init and list" {
 test "PluginManager scan nonexistent dir" {
     var pm = PluginManager.init(std.testing.allocator);
     defer pm.deinit();
-    try pm.scan("/tmp/_hermes_nonexistent_plugins_dir");
+    try pm.scan("_hermes_nonexistent_plugins_dir");
     try std.testing.expectEqual(@as(usize, 0), pm.list().len);
 }

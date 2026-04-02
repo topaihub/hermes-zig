@@ -34,7 +34,7 @@ test "FileWriteTool schema" {
 }
 
 test "FileWriteTool write then read" {
-    const path = "/tmp/_hermes_test_write.txt";
+    const path = "_hermes_test_write.txt";
     defer std.fs.cwd().deleteFile(path) catch {};
 
     var tool = FileWriteTool{};

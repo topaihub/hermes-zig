@@ -48,7 +48,7 @@ test "FileReadTool schema" {
 }
 
 test "FileReadTool read file" {
-    const path = "/tmp/_hermes_test_read.txt";
+    const path = "_hermes_test_read.txt";
     try std.fs.cwd().writeFile(.{ .sub_path = path, .data = "line1\nline2\nline3\n" });
     defer std.fs.cwd().deleteFile(path) catch {};
 

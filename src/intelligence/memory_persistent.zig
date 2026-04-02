@@ -28,12 +28,12 @@ pub fn appendMemory(path: []const u8, content: []const u8) !void {
 }
 
 test "readMemory returns null for missing file" {
-    const result = readMemory(std.testing.allocator, "/tmp/_hermes_nonexistent_memory_test");
+    const result = readMemory(std.testing.allocator, "_hermes_nonexistent_memory_test");
     try std.testing.expectEqual(null, result);
 }
 
 test "writeMemory + readMemory roundtrip" {
-    const path = "/tmp/_hermes_memory_test_roundtrip.txt";
+    const path = "_hermes_memory_test_roundtrip.txt";
     defer std.fs.cwd().deleteFile(path) catch {};
     try writeMemory(path, "hello memory");
     const data = readMemory(std.testing.allocator, path).?;

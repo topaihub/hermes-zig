@@ -57,7 +57,7 @@ pub const MemoryTool = struct {
 };
 
 test "MemoryTool schema" {
-    var tool = MemoryTool{ .storage_dir = "/tmp/_hermes_test_memory" };
+    var tool = MemoryTool{ .storage_dir = "_hermes_test_memory" };
     const handler = tools_interface.makeToolHandler(MemoryTool, &tool);
     try std.testing.expectEqualStrings("memory", handler.schema.name);
 }

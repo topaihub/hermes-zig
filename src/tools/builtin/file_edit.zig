@@ -50,7 +50,7 @@ test "FileEditTool schema" {
 }
 
 test "FileEditTool replace text" {
-    const path = "/tmp/_hermes_test_edit.txt";
+    const path = "_hermes_test_edit.txt";
     defer std.fs.cwd().deleteFile(path) catch {};
 
     std.fs.cwd().writeFile(.{ .sub_path = path, .data = "hello world hello" }) catch unreachable;
