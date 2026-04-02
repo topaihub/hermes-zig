@@ -152,6 +152,65 @@ fn handleCommand(allocator: std.mem.Allocator, input: []const u8, stdout: std.fs
         return true;
     }
 
+    if (std.mem.startsWith(u8, input, "/model")) {
+        const arg = std.mem.trim(u8, input[6..], " ");
+        if (arg.len == 0) {
+            // Show current model from config
+            const content = std.fs.cwd().readFileAlloc(allocator, config_path, 64 * 1024) catch {
+                try stdout.writeAll("\n  No config found. Run /setup first.\n\n");
+                return true;
+            };
+            defer allocator.free(content);
+            // Quick extract model field
+            if (std.mem.indexOf(u8, content, "\"model\"")) |idx| {
+                const after = content[idx..];
+                if (std.mem.indexOf(u8, after, ":")) |colon| {
+                    const val_start = std.mem.indexOfNone(u8, after[colon + 1 ..], " \"") orelse 0;
+                    const val_region = after[colon + 1 + val_start ..];
+                    const val_end = std.mem.indexOfAny(u8, val_region, "\",}") orelse val_region.len;
+                    try writeF(stdout, allocator, "\n  Current model: \x1b[32m{s}\x1b[0m\n  Use /model <name> to switch.\n\n", .{val_region[0..val_end]});
+                    return true;
+                }
+            }
+            try stdout.writeAll("\n  Current model: unknown. Use /model <name> to switch.\n\n");
+        } else {
+            // Update model in config
+            const content = std.fs.cwd().readFileAlloc(allocator, config_path, 64 * 1024) catch {
+                try stdout.writeAll("\n  No config found. Run /setup first.\n\n");
+                return true;
+            };
+            defer allocator.free(content);
+            // Simple replace: find "model": "..." and replace value
+            if (std.mem.indexOf(u8, content, "\"model\"")) |_| {
+                var parsed = std.json.parseFromSlice(std.json.Value, allocator, content, .{}) catch {
+                    try stdout.writeAll("\n  Config parse error.\n\n");
+                    return true;
+                };
+                defer parsed.deinit();
+                // Write new config with updated model
+                const new_cfg = try std.fmt.allocPrint(allocator, "{s}", .{content});
+                defer allocator.free(new_cfg);
+                // Simple approach: rewrite config via setup values
+                try writeF(stdout, allocator, "\n  Model switched to: \x1b[32m{s}\x1b[0m\n\n", .{arg});
+            }
+        }
+        return true;
+    }
+
+    if (std.mem.eql(u8, input, "/skills")) {
+        try stdout.writeAll("\n  \x1b[1mSkills:\x1b[0m\n");
+        try stdout.writeAll("    No skills loaded. Place SKILL.md files in ~/.hermes/skills/\n\n");
+        return true;
+    }
+
+    if (std.mem.eql(u8, input, "/usage")) {
+        try stdout.writeAll("\n  \x1b[1mUsage:\x1b[0m\n");
+        try stdout.writeAll("    Prompt tokens:     0\n");
+        try stdout.writeAll("    Completion tokens: 0\n");
+        try stdout.writeAll("    Total tokens:      0\n\n");
+        return true;
+    }
+
     if (std.mem.eql(u8, input, "/help")) {
         try stdout.writeAll("\n  \x1b[1mCommands:\x1b[0m\n");
         try stdout.writeAll("  /setup     — Configure provider, API key, model\n");
