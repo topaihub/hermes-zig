@@ -1,0 +1,57 @@
+{
+    "provider": "openrouter",
+    "model": "openrouter/nous-hermes",
+    "api_key": "sk-or-v1-...",
+    "api_base_url": "",
+    "temperature": 0.7,
+    "max_tokens": null,
+
+    "models": [
+        "openrouter/nous-hermes",
+        "openrouter/anthropic/claude-sonnet-4",
+        "openrouter/openai/gpt-4o",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "claude-sonnet-4-20250514",
+        "claude-haiku-3.5",
+        "gemini-2.5-pro"
+    ],
+
+    "reasoning": {
+        "enabled": false,
+        "effort": "medium"
+    },
+
+    "terminal": {
+        "backend": "local",
+        "timeout_ms": 30000,
+        "docker_image": "",
+        "ssh_host": "",
+        "ssh_user": "",
+        "ssh_port": 22
+    },
+
+    "tools": {
+        "enabled_toolsets": ["default"],
+        "disabled_tools": []
+    },
+
+    "memory": {
+        "enabled": true,
+        "nudge_interval": 10
+    },
+
+    "security": {
+        "command_approval": true,
+        "injection_scanning": true
+    },
+
+    "logging": {
+        "log_format": "text",
+        "log_dir": "logs",
+        "max_file_bytes": 104857600
+    },
+
+    "personality": "",
+    "context_files": []
+}

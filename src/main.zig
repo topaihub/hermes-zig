@@ -82,11 +82,20 @@ pub fn main() !void {
     var log = app_ctx.logger.subsystem("hermes");
     log.info("hermes agent starting", &.{});
 
+    const default_config = @embedFile("default_config.json");
+
     // Try to load existing config
     var cfg = blk: {
         var loaded = core.config_loader.loadFromFile(config_path, allocator) catch |err| {
             if (err == error.FileNotFound) {
-                try stdout.writeAll("  No config.json found. Starting setup wizard...\n\n");
+                // Generate default config.json
+                var df = std.fs.cwd().createFile(config_path, .{}) catch {
+                    break :blk core.Config{};
+                };
+                defer df.close();
+                df.writeAll(default_config) catch {};
+                try stdout.writeAll("  Generated default config.json\n");
+                try stdout.writeAll("  Starting setup wizard...\n\n");
                 try runSetupWizard(allocator, stdout, stdin);
                 break :blk core.Config{};
             }
