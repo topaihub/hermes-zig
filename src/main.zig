@@ -155,24 +155,28 @@ fn handleCommand(allocator: std.mem.Allocator, input: []const u8, stdout: std.fs
     if (std.mem.startsWith(u8, input, "/model")) {
         const arg = std.mem.trim(u8, input[6..], " ");
         if (arg.len == 0) {
-            // Show current model from config
-            const content = std.fs.cwd().readFileAlloc(allocator, config_path, 64 * 1024) catch {
-                try stdout.writeAll("\n  No config found. Run /setup first.\n\n");
-                return true;
-            };
-            defer allocator.free(content);
-            // Quick extract model field
-            if (std.mem.indexOf(u8, content, "\"model\"")) |idx| {
-                const after = content[idx..];
-                if (std.mem.indexOf(u8, after, ":")) |colon| {
-                    const val_start = std.mem.indexOfNone(u8, after[colon + 1 ..], " \"") orelse 0;
-                    const val_region = after[colon + 1 + val_start ..];
-                    const val_end = std.mem.indexOfAny(u8, val_region, "\",}") orelse val_region.len;
-                    try writeF(stdout, allocator, "\n  Current model: \x1b[32m{s}\x1b[0m\n  Use /model <name> to switch.\n\n", .{val_region[0..val_end]});
-                    return true;
-                }
-            }
-            try stdout.writeAll("\n  Current model: unknown. Use /model <name> to switch.\n\n");
+            try stdout.writeAll("\n  \x1b[1mSwitch Model\x1b[0m\n\n");
+            try stdout.writeAll("  Usage: /model <name>\n\n");
+            try stdout.writeAll("  \x1b[1mOpenRouter:\x1b[0m\n");
+            try stdout.writeAll("    openrouter/nous-hermes\n");
+            try stdout.writeAll("    openrouter/anthropic/claude-sonnet-4\n");
+            try stdout.writeAll("    openrouter/openai/gpt-4o\n");
+            try stdout.writeAll("    openrouter/google/gemini-2.5-pro\n");
+            try stdout.writeAll("    openrouter/deepseek/deepseek-r1\n");
+            try stdout.writeAll("    openrouter/meta-llama/llama-4-maverick\n\n");
+            try stdout.writeAll("  \x1b[1mOpenAI:\x1b[0m\n");
+            try stdout.writeAll("    gpt-4o\n");
+            try stdout.writeAll("    gpt-4o-mini\n");
+            try stdout.writeAll("    o1-preview\n");
+            try stdout.writeAll("    o3-mini\n\n");
+            try stdout.writeAll("  \x1b[1mAnthropic:\x1b[0m\n");
+            try stdout.writeAll("    claude-sonnet-4-20250514\n");
+            try stdout.writeAll("    claude-haiku-3.5\n");
+            try stdout.writeAll("    claude-opus-4\n\n");
+            try stdout.writeAll("  \x1b[1mNous:\x1b[0m\n");
+            try stdout.writeAll("    nous/hermes-3-llama-3.1-405b\n\n");
+            try stdout.writeAll("  Or enter any model name your provider supports.\n\n");
+            return true;
         } else {
             // Update model in config
             const content = std.fs.cwd().readFileAlloc(allocator, config_path, 64 * 1024) catch {
