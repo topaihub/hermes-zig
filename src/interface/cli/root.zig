@@ -23,6 +23,12 @@ pub const skills_hub_cmd = @import("skills_hub_cmd.zig");
 pub const clipboard = @import("clipboard.zig");
 pub const main_entry = @import("main_entry.zig");
 pub const uninstall = @import("uninstall.zig");
+pub const checklist = @import("checklist.zig");
+pub const claw = @import("claw.zig");
+pub const codex_models = @import("codex_models.zig");
+pub const copilot_auth = @import("copilot_auth.zig");
+pub const curses_ui = @import("curses_ui.zig");
+pub const pairing = @import("pairing.zig");
 
 // Re-export key types
 pub const RawMode = tui.RawMode;

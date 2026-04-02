@@ -303,6 +303,18 @@ fn handleCommand(allocator: std.mem.Allocator, input: []const u8, stdout: std.fs
         return true;
     }
 
+    if (std.mem.startsWith(u8, input, "/claw")) {
+        const arg = std.mem.trim(u8, input[5..], " ");
+        try @import("interface/cli/claw.zig").handleClawCommand(allocator, arg, stdout);
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, input, "/pairing")) {
+        const arg = std.mem.trim(u8, input[8..], " ");
+        try @import("interface/cli/pairing.zig").handlePairingCommand(allocator, arg, stdout);
+        return true;
+    }
+
     if (std.mem.eql(u8, input, "/usage")) {
         try stdout.writeAll("\n  \x1b[1mUsage:\x1b[0m\n");
         try stdout.writeAll("    Prompt tokens:     0\n");

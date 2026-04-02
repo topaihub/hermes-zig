@@ -18,6 +18,7 @@ pub const copilot_acp_client = @import("copilot_acp_client.zig");
 pub const models_dev = @import("models_dev.zig");
 pub const skill_commands = @import("skill_commands.zig");
 pub const skill_utils = @import("skill_utils.zig");
+pub const display = @import("display.zig");
 
 // Re-export key types
 pub const AgentLoop = loop.AgentLoop;
