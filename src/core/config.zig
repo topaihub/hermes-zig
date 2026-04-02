@@ -5,6 +5,7 @@ pub const Config = struct {
     api_key: []const u8 = "",
     temperature: f32 = 0.7,
     max_tokens: ?u32 = null,
+    models: []const []const u8 = &.{},
     reasoning: ReasoningConfig = .{},
     terminal: TerminalConfig = .{},
     tools: ToolsConfig = .{},

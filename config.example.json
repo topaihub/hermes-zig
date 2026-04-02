@@ -6,6 +6,17 @@
     "temperature": 0.7,
     "max_tokens": null,
 
+    "models": [
+        "openrouter/nous-hermes",
+        "openrouter/anthropic/claude-sonnet-4",
+        "openrouter/openai/gpt-4o",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "claude-sonnet-4-20250514",
+        "claude-haiku-3.5",
+        "gemini-2.5-pro"
+    ],
+
     "reasoning": {
         "enabled": false,
         "effort": "medium"
