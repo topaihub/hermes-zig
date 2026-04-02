@@ -7,6 +7,7 @@ pub const agent = @import("agent/root.zig");
 pub const interface = @import("interface/root.zig");
 pub const intelligence = @import("intelligence/root.zig");
 pub const security = @import("security/root.zig");
+pub const web_server_mod = @import("web_server.zig");
 
 const banner =
     \\
@@ -65,6 +66,12 @@ pub fn main() !void {
     };
     _ = &cfg;
 
+    // Start web config server in background
+    var web_server = web_server_mod.WebConfigServer{ .allocator = allocator };
+    const web_thread = std.Thread.spawn(.{}, web_server_mod.WebConfigServer.start, .{&web_server}) catch null;
+
+    try stdout.writeAll("  Config UI: \x1b[36mhttp://127.0.0.1:8318\x1b[0m\n\n");
+
     // Main interactive loop
     try stdout.writeAll("  Type a message to chat, or use commands:\n");
     try stdout.writeAll("  \x1b[90m/setup\x1b[0m  — Configure provider and API key\n");
@@ -90,6 +97,9 @@ pub fn main() !void {
         // Chat message — would go to AgentLoop
         try stdout.writeAll("\n  \x1b[33m⚡ Agent:\x1b[0m LLM not configured yet. Run \x1b[36m/setup\x1b[0m to configure.\n\n");
     }
+
+    web_server.stop();
+    if (web_thread) |wt| wt.join();
 
     try stdout.writeAll("\n  Goodbye! 👋\n");
 }

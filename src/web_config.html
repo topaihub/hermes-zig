@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hermes Agent — Configuration</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0f172a;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;padding:2rem}
+.container{max-width:720px;margin:0 auto}
+h1{color:#38bdf8;font-size:1.5rem;margin-bottom:.5rem;display:flex;align-items:center;gap:.5rem}
+.subtitle{color:#64748b;font-size:.85rem;margin-bottom:1.5rem}
+.status{display:inline-block;width:8px;height:8px;border-radius:50%;background:#22c55e;margin-left:.5rem}
+.status.off{background:#ef4444}
+.card{background:#1e293b;border:1px solid #334155;border-radius:8px;padding:1.25rem;margin-bottom:1rem}
+.card h2{color:#94a3b8;font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;margin-bottom:1rem}
+label{display:block;color:#cbd5e1;font-size:.85rem;margin-bottom:.25rem}
+select,input[type=text],input[type=password],input[type=number]{width:100%;background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:.5rem .75rem;border-radius:6px;font-size:.85rem;margin-bottom:.75rem}
+select:focus,input:focus{outline:none;border-color:#38bdf8}
+.row{display:flex;gap:1rem}
+.row>*{flex:1}
+.toggle-row{display:flex;justify-content:space-between;align-items:center;padding:.5rem 0}
+.toggle-row label{margin:0}
+.switch{position:relative;width:40px;height:22px}
+.switch input{opacity:0;width:0;height:0}
+.slider{position:absolute;inset:0;background:#334155;border-radius:11px;cursor:pointer;transition:.2s}
+.slider:before{content:'';position:absolute;width:16px;height:16px;left:3px;bottom:3px;background:#94a3b8;border-radius:50%;transition:.2s}
+.switch input:checked+.slider{background:#38bdf8}
+.switch input:checked+.slider:before{transform:translateX(18px);background:#fff}
+.key-wrap{position:relative}
+.key-wrap input{padding-right:3rem}
+.key-toggle{position:absolute;right:.5rem;top:.35rem;background:none;border:none;color:#64748b;cursor:pointer;font-size:.75rem}
+.btn-row{display:flex;gap:.75rem;margin-top:1rem}
+.btn{padding:.6rem 1.25rem;border:none;border-radius:6px;font-size:.85rem;cursor:pointer;font-weight:500}
+.btn-primary{background:#38bdf8;color:#0f172a}
+.btn-primary:hover{background:#7dd3fc}
+.btn-secondary{background:#334155;color:#e2e8f0}
+.btn-secondary:hover{background:#475569}
+.toast{position:fixed;bottom:2rem;right:2rem;padding:.75rem 1.25rem;border-radius:6px;font-size:.85rem;display:none;z-index:99}
+.toast.ok{background:#166534;color:#bbf7d0;display:block}
+.toast.err{background:#7f1d1d;color:#fecaca;display:block}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>⚡ Hermes Agent<span class="status" id="st"></span></h1>
+<p class="subtitle">Configuration Panel</p>
+
+<div class="card">
+<h2>Provider Setup</h2>
+<label>Provider</label>
+<select id="provider" onchange="updateModels()">
+<option value="openrouter">OpenRouter</option>
+<option value="openai">OpenAI</option>
+<option value="anthropic">Anthropic</option>
+<option value="nous">Nous Research</option>
+<option value="custom">Custom Endpoint</option>
+</select>
+<label>API Key</label>
+<div class="key-wrap">
+<input type="password" id="api_key" placeholder="sk-...">
+<button class="key-toggle" onclick="toggleKey()">show</button>
+</div>
+<label>Model</label>
+<select id="model"></select>
+<div id="custom_url_wrap" style="display:none">
+<label>API Base URL</label>
+<input type="text" id="api_base_url" placeholder="https://api.example.com/v1">
+</div>
+</div>
+
+<div class="card">
+<h2>Tools</h2>
+<div class="toggle-row"><label>Terminal Tools</label><label class="switch"><input type="checkbox" id="t_terminal" checked><span class="slider"></span></label></div>
+<div class="toggle-row"><label>File Tools</label><label class="switch"><input type="checkbox" id="t_file" checked><span class="slider"></span></label></div>
+<div class="toggle-row"><label>Web Tools</label><label class="switch"><input type="checkbox" id="t_web" checked><span class="slider"></span></label></div>
+<div class="toggle-row"><label>Code Tools</label><label class="switch"><input type="checkbox" id="t_code" checked><span class="slider"></span></label></div>
+</div>
+
+<div class="card">
+<h2>Terminal</h2>
+<div class="row">
+<div><label>Backend</label><select id="term_backend"><option value="local">Local</option><option value="docker">Docker</option><option value="ssh">SSH</option></select></div>
+<div><label>Timeout (ms)</label><input type="number" id="term_timeout" value="30000"></div>
+</div>
+</div>
+
+<div class="card">
+<h2>Memory</h2>
+<div class="toggle-row"><label>Enable Memory</label><label class="switch"><input type="checkbox" id="mem_enabled" checked><span class="slider"></span></label></div>
+<label>Nudge Interval (messages)</label>
+<input type="number" id="mem_nudge" value="10">
+</div>
+
+<div class="card">
+<h2>Security</h2>
+<div class="toggle-row"><label>Command Approval</label><label class="switch"><input type="checkbox" id="sec_approval" checked><span class="slider"></span></label></div>
+<div class="toggle-row"><label>Injection Scanning</label><label class="switch"><input type="checkbox" id="sec_injection" checked><span class="slider"></span></label></div>
+</div>
+
+<div class="btn-row">
+<button class="btn btn-primary" onclick="saveConfig()">Save Configuration</button>
+<button class="btn btn-secondary" onclick="testConnection()">Test Connection</button>
+</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const models={
+openrouter:['openrouter/nous-hermes','openrouter/anthropic/claude-3.5-sonnet','openrouter/openai/gpt-4o'],
+openai:['gpt-4o','gpt-4o-mini','o1-preview'],
+anthropic:['claude-sonnet-4-20250514','claude-haiku-3.5'],
+nous:['nous/hermes-3-llama-3.1-405b'],
+custom:['gpt-4o']
+};
+
+function updateModels(){
+const p=document.getElementById('provider').value;
+const m=document.getElementById('model');
+m.innerHTML='';
+(models[p]||[]).forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;m.appendChild(o)});
+document.getElementById('custom_url_wrap').style.display=p==='custom'?'block':'none';
+}
+
+function toggleKey(){
+const k=document.getElementById('api_key');
+const b=k.nextElementSibling;
+if(k.type==='password'){k.type='text';b.textContent='hide'}else{k.type='password';b.textContent='show'}
+}
+
+function toast(msg,ok){
+const t=document.getElementById('toast');
+t.textContent=msg;t.className='toast '+(ok?'ok':'err');
+setTimeout(()=>t.className='toast',3000);
+}
+
+function buildConfig(){
+return{
+provider:document.getElementById('provider').value,
+model:document.getElementById('model').value,
+api_key:document.getElementById('api_key').value,
+api_base_url:document.getElementById('api_base_url').value,
+temperature:0.7,
+terminal:{backend:document.getElementById('term_backend').value,timeout_ms:parseInt(document.getElementById('term_timeout').value)||30000},
+memory:{enabled:document.getElementById('mem_enabled').checked,nudge_interval:parseInt(document.getElementById('mem_nudge').value)||10},
+security:{command_approval:document.getElementById('sec_approval').checked,injection_scanning:document.getElementById('sec_injection').checked}
+};
+}
+
+function applyConfig(c){
+if(c.provider){document.getElementById('provider').value=c.provider;updateModels()}
+if(c.model)document.getElementById('model').value=c.model;
+if(c.api_key)document.getElementById('api_key').value=c.api_key;
+if(c.api_base_url)document.getElementById('api_base_url').value=c.api_base_url;
+if(c.terminal){
+if(c.terminal.backend)document.getElementById('term_backend').value=c.terminal.backend;
+if(c.terminal.timeout_ms)document.getElementById('term_timeout').value=c.terminal.timeout_ms;
+}
+if(c.memory){
+document.getElementById('mem_enabled').checked=c.memory.enabled!==false;
+if(c.memory.nudge_interval)document.getElementById('mem_nudge').value=c.memory.nudge_interval;
+}
+if(c.security){
+document.getElementById('sec_approval').checked=c.security.command_approval!==false;
+document.getElementById('sec_injection').checked=c.security.injection_scanning!==false;
+}
+}
+
+async function saveConfig(){
+try{
+const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(buildConfig())});
+if(r.ok)toast('Configuration saved!',true);else toast('Save failed: '+r.statusText,false);
+}catch(e){toast('Save failed: '+e.message,false)}
+}
+
+async function testConnection(){
+try{
+const r=await fetch('/api/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:document.getElementById('api_key').value,provider:document.getElementById('provider').value})});
+const d=await r.json();
+toast(d.ok?'Connection successful!':'Connection failed: '+(d.error||'unknown'),d.ok);
+}catch(e){toast('Test failed: '+e.message,false)}
+}
+
+async function loadConfig(){
+try{
+const r=await fetch('/api/config');
+if(r.ok){const c=await r.json();applyConfig(c)}
+}catch(e){}
+}
+
+async function checkStatus(){
+try{
+const r=await fetch('/api/status');
+document.getElementById('st').className='status'+(r.ok?'':' off');
+}catch(e){document.getElementById('st').className='status off'}
+}
+
+updateModels();loadConfig();checkStatus();setInterval(checkStatus,10000);
+</script>
+</body>
+</html>
