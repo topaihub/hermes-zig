@@ -122,13 +122,17 @@ pub fn main() !void {
 
     // Resolve LLM provider
     var native_http = framework.NativeHttpClient.init(null);
-    var resolved_provider = llm.runtime_provider.resolveProvider(allocator, &cfg, native_http.client());
+    var resolved_provider = try llm.runtime_provider.resolveProvider(allocator, &cfg, native_http.client());
+    defer if (resolved_provider) |provider| provider.deinit(allocator);
 
     var tool_reg = tools.registry.ToolRegistry.init(allocator, &.{});
     defer tool_reg.deinit();
 
     // Load soul for system prompt
-    const soul_text = core.soul.loadSoul(allocator, core.soul.getHermesHome()) catch try allocator.dupe(u8, core.DEFAULT_SOUL);
+    const hermes_home = try core.soul.getHermesHome(allocator);
+    defer allocator.free(hermes_home);
+
+    const soul_text = core.soul.loadSoul(allocator, hermes_home) catch try allocator.dupe(u8, core.DEFAULT_SOUL);
     defer allocator.free(soul_text);
 
     // Conversation history

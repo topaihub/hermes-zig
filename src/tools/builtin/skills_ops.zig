@@ -1,15 +1,15 @@
 const std = @import("std");
 const tools_interface = @import("../interface.zig");
+const core_env = @import("../../core/env.zig");
 const ToolResult = tools_interface.ToolResult;
-
-const skills_base = "/.hermes/skills/";
 
 fn getSkillsDir(allocator: std.mem.Allocator, working_dir: []const u8) ![]const u8 {
     if (std.fs.path.isAbsolute(working_dir)) {
-        return std.fmt.allocPrint(allocator, "{s}{s}", .{ working_dir, skills_base });
+        return std.fs.path.join(allocator, &.{ working_dir, ".hermes", "skills" });
     }
-    const home = std.posix.getenv("HOME") orelse "/tmp";
-    return std.fmt.allocPrint(allocator, "{s}{s}", .{ home, skills_base });
+    const home = try core_env.getHomeDirOwned(allocator);
+    defer allocator.free(home);
+    return std.fs.path.join(allocator, &.{ home, ".hermes", "skills" });
 }
 
 pub const SkillsList = struct {

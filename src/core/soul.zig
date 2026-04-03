@@ -1,9 +1,10 @@
 const std = @import("std");
+const constants = @import("constants.zig");
 
 pub const DEFAULT_SOUL = "You are Hermes, a helpful AI assistant. You are knowledgeable, concise, and friendly. You help users with coding, analysis, and general questions.";
 
-pub fn getHermesHome() []const u8 {
-    return std.posix.getenv("HERMES_HOME") orelse "~/.hermes";
+pub fn getHermesHome(allocator: std.mem.Allocator) ![]u8 {
+    return constants.getHermesHome(allocator);
 }
 
 pub fn loadSoul(allocator: std.mem.Allocator, hermes_home: []const u8) ![]u8 {

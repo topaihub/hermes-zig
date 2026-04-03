@@ -1,10 +1,12 @@
 const std = @import("std");
+const env = @import("env.zig");
 
 pub fn getHermesHome(allocator: std.mem.Allocator) ![]u8 {
-    if (std.posix.getenv("HERMES_HOME")) |home| {
-        return try allocator.dupe(u8, home);
+    if (try env.getEnvVarOwned(allocator, "HERMES_HOME")) |home| {
+        return home;
     }
-    const home_dir = std.posix.getenv("HOME") orelse "/tmp";
+    const home_dir = try env.getHomeDirOwned(allocator);
+    defer allocator.free(home_dir);
     return try std.fs.path.join(allocator, &.{ home_dir, ".hermes" });
 }
 
