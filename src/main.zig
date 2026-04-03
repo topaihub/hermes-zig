@@ -407,6 +407,20 @@ fn runSetupWizard(allocator: std.mem.Allocator, stdout: std.fs.File, stdin: std.
         try writeF(stdout, allocator, "  API key: \x1b[32m{s}...****\x1b[0m\n", .{api_key[0..masked_len]});
     }
 
+    const api_base_url = if (std.mem.eql(u8, provider, "custom")) blk: {
+        while (true) {
+            try stdout.writeAll("\n  API base URL: ");
+            var url_buf: [512]u8 = undefined;
+            const url_raw = try readLine(stdin, &url_buf) orelse "";
+            const url = std.mem.trim(u8, url_raw, " \t\r\n");
+            if (url.len > 0) {
+                try writeF(stdout, allocator, "  API base URL: \x1b[32m{s}\x1b[0m\n", .{url});
+                break :blk url;
+            }
+            try stdout.writeAll("  API base URL is required for custom provider.\n");
+        }
+    } else "";
+
     // Model
     const default_model: []const u8 = if (std.mem.eql(u8, provider, "openrouter"))
         "openrouter/nous-hermes"
@@ -428,11 +442,29 @@ fn runSetupWizard(allocator: std.mem.Allocator, stdout: std.fs.File, stdin: std.
     try writeF(stdout, allocator, "  Model: \x1b[32m{s}\x1b[0m\n", .{model});
 
     // Write config
-    const config_json = try std.fmt.allocPrint(allocator,
+    const config_json = try buildSetupConfigJson(allocator, provider, model, api_key, api_base_url);
+    defer allocator.free(config_json);
+
+    var file = try std.fs.cwd().createFile(config_path, .{});
+    defer file.close();
+    try file.writeAll(config_json);
+
+    try stdout.writeAll("\n  \x1b[32m✓ Configuration saved to config.json\x1b[0m\n\n");
+}
+
+fn buildSetupConfigJson(
+    allocator: std.mem.Allocator,
+    provider: []const u8,
+    model: []const u8,
+    api_key: []const u8,
+    api_base_url: []const u8,
+) ![]u8 {
+    return std.fmt.allocPrint(allocator,
         \\{{
         \\  "provider": "{s}",
         \\  "model": "{s}",
         \\  "api_key": "{s}",
+        \\  "api_base_url": "{s}",
         \\  "temperature": 0.7,
         \\  "terminal": {{
         \\    "backend": "local",
@@ -447,14 +479,7 @@ fn runSetupWizard(allocator: std.mem.Allocator, stdout: std.fs.File, stdin: std.
         \\    "injection_scanning": true
         \\  }}
         \\}}
-    , .{ provider, model, api_key });
-    defer allocator.free(config_json);
-
-    var file = try std.fs.cwd().createFile(config_path, .{});
-    defer file.close();
-    try file.writeAll(config_json);
-
-    try stdout.writeAll("\n  \x1b[32m✓ Configuration saved to config.json\x1b[0m\n\n");
+    , .{ provider, model, api_key, api_base_url });
 }
 
 fn showConfig(allocator: std.mem.Allocator, stdout: std.fs.File) !void {
@@ -527,6 +552,23 @@ test "Empty JSON uses all defaults" {
     defer loaded.deinit();
     try std.testing.expectEqualStrings("openrouter/nous-hermes", loaded.parsed.value.model);
     try std.testing.expect(loaded.parsed.value.temperature == 0.7);
+}
+
+test "setup config json includes api_base_url" {
+    const json = try buildSetupConfigJson(
+        std.testing.allocator,
+        "custom",
+        "gpt-5.4",
+        "sk-test",
+        "https://api.example.com/v1",
+    );
+    defer std.testing.allocator.free(json);
+
+    var loaded = try core.config_loader.loadFromString(json, std.testing.allocator);
+    defer loaded.deinit();
+
+    try std.testing.expectEqualStrings("custom", loaded.parsed.value.provider);
+    try std.testing.expectEqualStrings("https://api.example.com/v1", loaded.parsed.value.api_base_url);
 }
 
 test "Soul loading returns default when file doesn't exist" {
