@@ -67,6 +67,11 @@ select:focus,input:focus{outline:none;border-color:#38bdf8}
 <label>API Base URL</label>
 <input type="text" id="api_base_url" placeholder="https://api.example.com/v1">
 </div>
+<label>API Protocol</label>
+<select id="wire_api">
+<option value="chat_completions">Chat Completions</option>
+<option value="responses">Responses</option>
+</select>
 </div>
 
 <div class="card">
@@ -140,6 +145,7 @@ provider:document.getElementById('provider').value,
 model:document.getElementById('model').value,
 api_key:document.getElementById('api_key').value,
 api_base_url:document.getElementById('api_base_url').value,
+wire_api:document.getElementById('wire_api').value,
 temperature:0.7,
 terminal:{backend:document.getElementById('term_backend').value,timeout_ms:parseInt(document.getElementById('term_timeout').value)||30000},
 memory:{enabled:document.getElementById('mem_enabled').checked,nudge_interval:parseInt(document.getElementById('mem_nudge').value)||10},
@@ -152,6 +158,7 @@ if(c.provider){document.getElementById('provider').value=c.provider;updateModels
 if(c.model)document.getElementById('model').value=c.model;
 if(c.api_key)document.getElementById('api_key').value=c.api_key;
 if(c.api_base_url)document.getElementById('api_base_url').value=c.api_base_url;
+if(c.wire_api)document.getElementById('wire_api').value=c.wire_api;
 if(c.terminal){
 if(c.terminal.backend)document.getElementById('term_backend').value=c.terminal.backend;
 if(c.terminal.timeout_ms)document.getElementById('term_timeout').value=c.terminal.timeout_ms;

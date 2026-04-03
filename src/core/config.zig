@@ -2,6 +2,7 @@ pub const Config = struct {
     model: []const u8 = "openrouter/nous-hermes",
     provider: []const u8 = "openrouter",
     api_base_url: []const u8 = "",
+    wire_api: []const u8 = "chat_completions",
     api_key: []const u8 = "",
     temperature: f32 = 0.7,
     max_tokens: ?u32 = null,
@@ -25,4 +26,5 @@ pub const LoggingConfig = struct {
     log_format: []const u8 = "text",
     log_dir: []const u8 = "logs",
     max_file_bytes: u64 = 100 * 1024 * 1024,
+    debug_prompts: bool = false,
 };

@@ -16,26 +16,30 @@ pub const WebConfigServer = struct {
         var server = addr.listen(.{ .reuse_address = true }) catch return;
         self.listener = server;
         self.running.store(true, .release);
+        defer {
+            if (self.listener != null) {
+                server.deinit();
+                self.listener = null;
+            }
+        }
 
         while (self.running.load(.acquire)) {
             const conn = server.accept() catch |err| {
-                if (!self.running.load(.acquire)) break;
-                if (err == error.ConnectionAborted) continue;
-                break;
+                if (!self.running.load(.acquire) or err == error.ConnectionAborted or err == error.Unexpected) {
+                    return;
+                }
+                return;
             };
             self.handleConnection(conn.stream) catch {};
             conn.stream.close();
         }
-        server.deinit();
-        self.listener = null;
     }
 
     pub fn stop(self: *WebConfigServer) void {
         self.running.store(false, .release);
-        if (self.listener) |*l| {
-            l.stream.close();
-            self.listener = null;
-        }
+        const addr = net.Address.parseIp("127.0.0.1", self.port) catch return;
+        const stream = net.tcpConnectToAddress(addr) catch return;
+        stream.close();
     }
 
     fn handleConnection(self: *WebConfigServer, stream: net.Stream) !void {

@@ -64,7 +64,7 @@ pub fn resolveProvider(allocator: std.mem.Allocator, config: *const core_config.
     const custom_base = if (config.api_base_url.len > 0) config.api_base_url else null;
 
     return .{
-        .storage = provider_registry.createFromConfig(allocator, provider, custom_base, api_key, http),
+        .storage = provider_registry.createFromConfig(allocator, provider, custom_base, config.wire_api, api_key, http),
         .owned_api_key = owned_api_key,
     };
 }

@@ -3,6 +3,7 @@
     "model": "openrouter/nous-hermes",
     "api_key": "sk-or-v1-...",
     "api_base_url": "",
+    "wire_api": "chat_completions",
     "temperature": 0.7,
     "max_tokens": null,
 
@@ -49,7 +50,8 @@
     "logging": {
         "log_format": "text",
         "log_dir": "logs",
-        "max_file_bytes": 104857600
+        "max_file_bytes": 104857600,
+        "debug_prompts": false
     },
 
     "personality": "",

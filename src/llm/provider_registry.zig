@@ -36,6 +36,7 @@ pub fn createFromConfig(
     allocator: std.mem.Allocator,
     provider: []const u8,
     custom_base_url: ?[]const u8,
+    wire_api: []const u8,
     api_key: []const u8,
     http: framework.HttpClient,
 ) ClientStorage {
@@ -44,6 +45,7 @@ pub fn createFromConfig(
         .openai_compat => .{ .openai_compat = openai_compat.OpenAICompatClient.init(
             allocator,
             resolveBaseUrl(provider, custom_base_url),
+            wire_api,
             api_key,
             http,
         ) },
@@ -60,19 +62,21 @@ test "provider registry creates correct client type" {
     var native = framework.NativeHttpClient.init(Mock.mockSend);
     const http = native.client();
 
-    const oai = createFromConfig(std.testing.allocator, "openai", null, "key", http);
+    const oai = createFromConfig(std.testing.allocator, "openai", null, "chat_completions", "key", http);
     try std.testing.expectEqual(ProviderType.openai_compat, std.meta.activeTag(oai));
 
-    const anth = createFromConfig(std.testing.allocator, "anthropic", null, "key", http);
+    const anth = createFromConfig(std.testing.allocator, "anthropic", null, "chat_completions", "key", http);
     try std.testing.expectEqual(ProviderType.anthropic, std.meta.activeTag(anth));
 
-    const or_client = createFromConfig(std.testing.allocator, "openrouter", null, "key", http);
+    const or_client = createFromConfig(std.testing.allocator, "openrouter", null, "chat_completions", "key", http);
     try std.testing.expectEqual(ProviderType.openai_compat, std.meta.activeTag(or_client));
     try std.testing.expectEqualStrings(core_types.OPENROUTER_BASE_URL, or_client.openai_compat.base_url);
+    try std.testing.expectEqual(openai_compat.WireApi.chat_completions, or_client.openai_compat.wire_api);
 
-    const nous = createFromConfig(std.testing.allocator, "nous", null, "key", http);
+    const nous = createFromConfig(std.testing.allocator, "nous", null, "chat_completions", "key", http);
     try std.testing.expectEqualStrings(core_types.NOUS_API_BASE_URL, nous.openai_compat.base_url);
 
-    const custom = createFromConfig(std.testing.allocator, "custom", "https://my.api/v1", "key", http);
+    const custom = createFromConfig(std.testing.allocator, "custom", "https://my.api/v1", "responses", "key", http);
     try std.testing.expectEqualStrings("https://my.api/v1", custom.openai_compat.base_url);
+    try std.testing.expectEqual(openai_compat.WireApi.responses, custom.openai_compat.wire_api);
 }

@@ -68,29 +68,17 @@ pub fn main() !void {
 
     try stdout.writeAll("\x1b[36m" ++ banner ++ "\x1b[0m\n");
 
-    // Init framework AppContext with rotating file logging
-    var app_ctx = try framework.AppContext.init(allocator, .{});
-    defer app_ctx.deinit();
-
-    var rotating_sink = logging.RotatingFileSink.init(allocator, "logs", "hermes");
-    defer rotating_sink.deinit();
-    const original_sink = app_ctx.logger.sink;
-    var file_multi = try framework.MultiSink.init(allocator, &.{ original_sink, rotating_sink.asLogSink() });
-    defer file_multi.deinit();
-    app_ctx.logger.sink = file_multi.asLogSink();
-
-    var log = app_ctx.logger.subsystem("hermes");
-    log.info("hermes agent starting", &.{});
-
     // Load .env file if it exists
     var env_map = try core.env_loader.loadEnvFile(allocator, ".env");
     defer core.env_loader.deinitEnvMap(allocator, &env_map);
 
     const default_config = @embedFile("default_config.json");
+    var loaded_cfg: ?core.LoadedConfig = null;
+    defer if (loaded_cfg) |*loaded| loaded.deinit();
 
     // Try to load existing config
     var cfg = blk: {
-        var loaded = core.config_loader.loadFromFile(config_path, allocator) catch |err| {
+        loaded_cfg = core.config_loader.loadFromFile(config_path, allocator) catch |err| {
             if (err == error.FileNotFound) {
                 // Generate default config.json
                 var df = std.fs.cwd().createFile(config_path, .{}) catch {
@@ -106,13 +94,71 @@ pub fn main() !void {
             try writeF(stdout, allocator, "  Config error: {s}\n", .{@errorName(err)});
             break :blk core.Config{};
         };
-        defer loaded.deinit();
-        try writeF(stdout, allocator, "  Provider: \x1b[32m{s}\x1b[0m\n", .{loaded.parsed.value.provider});
-        try writeF(stdout, allocator, "  Model:    \x1b[32m{s}\x1b[0m\n", .{loaded.parsed.value.model});
+        try writeF(stdout, allocator, "  Provider: \x1b[32m{s}\x1b[0m\n", .{loaded_cfg.?.parsed.value.provider});
+        try writeF(stdout, allocator, "  Model:    \x1b[32m{s}\x1b[0m\n", .{loaded_cfg.?.parsed.value.model});
         try stdout.writeAll("\n");
-        break :blk loaded.parsed.value;
+        break :blk loaded_cfg.?.parsed.value;
     };
     _ = &cfg;
+
+    var app_ctx = try framework.AppContext.init(allocator, .{
+        .log_level = .debug,
+        .console_log_style = .pretty,
+    });
+    defer app_ctx.deinit();
+
+    const original_sink = app_ctx.logger.sink;
+    var sink_storage: [3]framework.LogSink = undefined;
+    var sink_count: usize = 0;
+    sink_storage[sink_count] = original_sink;
+    sink_count += 1;
+
+    var trace_file_sink: framework.TraceTextFileSink = undefined;
+    var has_trace_file_sink = false;
+    defer if (has_trace_file_sink) trace_file_sink.deinit();
+
+    var json_file_sink: framework.RotatingFileSink = undefined;
+    var has_json_file_sink = false;
+    defer if (has_json_file_sink) json_file_sink.deinit();
+
+    if (usesTextLogFormat(cfg.logging.log_format)) {
+        const trace_log_path = try std.fmt.allocPrint(allocator, "{s}/hermes-trace.log", .{cfg.logging.log_dir});
+        defer allocator.free(trace_log_path);
+
+        trace_file_sink = try framework.TraceTextFileSink.init(
+            allocator,
+            trace_log_path,
+            cfg.logging.max_file_bytes,
+            .{
+                .include_observer = false,
+                .include_runtime_dispatch = false,
+                .include_framework_method_trace = true,
+            },
+        );
+        has_trace_file_sink = true;
+        sink_storage[sink_count] = trace_file_sink.asLogSink();
+        sink_count += 1;
+    }
+
+    if (usesJsonLogFormat(cfg.logging.log_format)) {
+        json_file_sink = framework.RotatingFileSink.init(allocator, .{
+            .log_dir = cfg.logging.log_dir,
+            .prefix = if (usesTextLogFormat(cfg.logging.log_format)) "hermes-json" else "hermes",
+            .max_file_bytes = cfg.logging.max_file_bytes,
+            .format = .json,
+        });
+        has_json_file_sink = true;
+        sink_storage[sink_count] = json_file_sink.sink();
+        sink_count += 1;
+    }
+
+    var file_multi = try framework.MultiSink.init(allocator, sink_storage[0..sink_count]);
+    defer file_multi.deinit();
+    app_ctx.logger.sink = file_multi.asLogSink();
+    defer app_ctx.logger.sink = original_sink;
+
+    var log = app_ctx.logger.subsystem("hermes");
+    log.info("hermes agent starting", &.{});
 
     // Start web config server in background
     var web_server = web_server_mod.WebConfigServer{ .allocator = allocator };
@@ -137,7 +183,14 @@ pub fn main() !void {
 
     // Conversation history
     var conversation: std.ArrayList(core.Message) = .{};
-    defer conversation.deinit(allocator);
+    defer {
+        if (conversation.items.len > 1) {
+            for (conversation.items[1..]) |msg| {
+                allocator.free(msg.content);
+            }
+        }
+        conversation.deinit(allocator);
+    }
     try conversation.append(allocator, .{ .role = .system, .content = soul_text });
 
     // Main interactive loop
@@ -148,6 +201,7 @@ pub fn main() !void {
     try stdout.writeAll("  \x1b[90m/help\x1b[0m   — Show all commands\n");
     try stdout.writeAll("  \x1b[90m/quit\x1b[0m   — Exit\n\n");
 
+    var request_seq: u64 = 0;
     var line_buf: [4096]u8 = undefined;
     while (true) {
         try stdout.writeAll("\x1b[36mhermes>\x1b[0m ");
@@ -157,13 +211,33 @@ pub fn main() !void {
         if (input.len == 0) continue;
 
         if (std.mem.startsWith(u8, input, "/")) {
-            const handled = try handleCommand(allocator, input, stdout, stdin);
+            request_seq += 1;
+            const request_id = try std.fmt.allocPrint(allocator, "cli-command-{d}", .{request_seq});
+            defer allocator.free(request_id);
+
+            var request_trace = try framework.observability.request_trace.begin(allocator, app_ctx.logger, .cli, request_id, "COMMAND", input, null);
+            defer request_trace.deinit();
+
+            const handled = handleCommand(allocator, input, stdout, stdin) catch |err| {
+                framework.observability.request_trace.complete(app_ctx.logger, &request_trace, 500, @errorName(err));
+                return err;
+            };
+
+            framework.observability.request_trace.complete(app_ctx.logger, &request_trace, if (handled) 200 else 204, null);
             if (!handled) break; // /quit
             continue;
         }
 
         // Chat message
+        request_seq += 1;
+        const request_id = try std.fmt.allocPrint(allocator, "cli-chat-{d}", .{request_seq});
+        defer allocator.free(request_id);
+
+        var request_trace = try framework.observability.request_trace.begin(allocator, app_ctx.logger, .cli, request_id, "CHAT", "/chat", null);
+        defer request_trace.deinit();
+
         if (resolved_provider == null) {
+            framework.observability.request_trace.complete(app_ctx.logger, &request_trace, 503, "LLM_NOT_CONFIGURED");
             try stdout.writeAll("\n  \x1b[33m⚡ Agent:\x1b[0m LLM not configured yet. Run \x1b[36m/setup\x1b[0m to configure.\n\n");
             continue;
         }
@@ -176,13 +250,17 @@ pub fn main() !void {
             .llm = llm_client,
             .tools = &tool_reg,
             .config = &cfg,
+            .logger = app_ctx.logger,
         };
 
         var result = agent_loop.run(conversation.items, &.{}) catch |err| {
+            framework.observability.request_trace.complete(app_ctx.logger, &request_trace, 500, @errorName(err));
             try writeF(stdout, allocator, "\n  \x1b[31mError:\x1b[0m {s}\n\n", .{@errorName(err)});
             continue;
         };
         defer result.deinit(allocator);
+
+        framework.observability.request_trace.complete(app_ctx.logger, &request_trace, 200, null);
 
         try stdout.writeAll("\n  \x1b[33m⚡ Agent:\x1b[0m ");
         try stdout.writeAll(result.content);
@@ -421,6 +499,20 @@ fn runSetupWizard(allocator: std.mem.Allocator, stdout: std.fs.File, stdin: std.
         }
     } else "";
 
+    const wire_api = if (std.mem.eql(u8, provider, "custom") or std.mem.eql(u8, provider, "openai")) blk: {
+        try stdout.writeAll("\n  Select API protocol:\n");
+        try stdout.writeAll("    \x1b[36m1\x1b[0m) Chat Completions\n");
+        try stdout.writeAll("    \x1b[36m2\x1b[0m) Responses\n");
+        try stdout.writeAll("\n  Choice [1]: ");
+
+        var wire_buf: [64]u8 = undefined;
+        const wire_raw = try readLine(stdin, &wire_buf) orelse "";
+        const wire_choice = std.mem.trim(u8, wire_raw, " \t\r\n");
+        const selected = if (std.mem.eql(u8, wire_choice, "2")) "responses" else "chat_completions";
+        try writeF(stdout, allocator, "  API protocol: \x1b[32m{s}\x1b[0m\n", .{selected});
+        break :blk selected;
+    } else "chat_completions";
+
     // Model
     const default_model: []const u8 = if (std.mem.eql(u8, provider, "openrouter"))
         "openrouter/nous-hermes"
@@ -442,7 +534,7 @@ fn runSetupWizard(allocator: std.mem.Allocator, stdout: std.fs.File, stdin: std.
     try writeF(stdout, allocator, "  Model: \x1b[32m{s}\x1b[0m\n", .{model});
 
     // Write config
-    const config_json = try buildSetupConfigJson(allocator, provider, model, api_key, api_base_url);
+    const config_json = try buildSetupConfigJson(allocator, provider, model, api_key, api_base_url, wire_api);
     defer allocator.free(config_json);
 
     var file = try std.fs.cwd().createFile(config_path, .{});
@@ -458,6 +550,7 @@ fn buildSetupConfigJson(
     model: []const u8,
     api_key: []const u8,
     api_base_url: []const u8,
+    wire_api: []const u8,
 ) ![]u8 {
     return std.fmt.allocPrint(allocator,
         \\{{
@@ -465,6 +558,7 @@ fn buildSetupConfigJson(
         \\  "model": "{s}",
         \\  "api_key": "{s}",
         \\  "api_base_url": "{s}",
+        \\  "wire_api": "{s}",
         \\  "temperature": 0.7,
         \\  "terminal": {{
         \\    "backend": "local",
@@ -479,7 +573,15 @@ fn buildSetupConfigJson(
         \\    "injection_scanning": true
         \\  }}
         \\}}
-    , .{ provider, model, api_key, api_base_url });
+    , .{ provider, model, api_key, api_base_url, wire_api });
+}
+
+fn usesTextLogFormat(log_format: []const u8) bool {
+    return std.mem.eql(u8, log_format, "text") or std.mem.eql(u8, log_format, "both") or log_format.len == 0;
+}
+
+fn usesJsonLogFormat(log_format: []const u8) bool {
+    return std.mem.eql(u8, log_format, "json") or std.mem.eql(u8, log_format, "both");
 }
 
 fn showConfig(allocator: std.mem.Allocator, stdout: std.fs.File) !void {
@@ -530,6 +632,7 @@ test "Config defaults are correct" {
     const cfg = core.Config{};
     try std.testing.expectEqualStrings("openrouter/nous-hermes", cfg.model);
     try std.testing.expectEqualStrings("openrouter", cfg.provider);
+    try std.testing.expectEqualStrings("chat_completions", cfg.wire_api);
     try std.testing.expect(cfg.temperature == 0.7);
     try std.testing.expectEqual(null, cfg.max_tokens);
     try std.testing.expectEqual(false, cfg.reasoning.enabled);
@@ -561,6 +664,7 @@ test "setup config json includes api_base_url" {
         "gpt-5.4",
         "sk-test",
         "https://api.example.com/v1",
+        "responses",
     );
     defer std.testing.allocator.free(json);
 
@@ -569,6 +673,7 @@ test "setup config json includes api_base_url" {
 
     try std.testing.expectEqualStrings("custom", loaded.parsed.value.provider);
     try std.testing.expectEqualStrings("https://api.example.com/v1", loaded.parsed.value.api_base_url);
+    try std.testing.expectEqualStrings("responses", loaded.parsed.value.wire_api);
 }
 
 test "Soul loading returns default when file doesn't exist" {

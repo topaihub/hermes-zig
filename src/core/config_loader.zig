@@ -10,7 +10,10 @@ pub const LoadedConfig = struct {
 };
 
 pub fn loadFromString(json: []const u8, allocator: std.mem.Allocator) !LoadedConfig {
-    return .{ .parsed = try std.json.parseFromSlice(Config, allocator, json, .{ .ignore_unknown_fields = true }) };
+    return .{ .parsed = try std.json.parseFromSlice(Config, allocator, json, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    }) };
 }
 
 pub fn loadFromFile(path: []const u8, allocator: std.mem.Allocator) !LoadedConfig {
