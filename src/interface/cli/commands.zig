@@ -1,125 +1,175 @@
 const std = @import("std");
 
-pub const Command = enum {
-    new,
+pub const CommandId = enum {
+    new_session,
     model,
-    personality,
     tools,
+    tools_config,
     skills,
-    compress,
+    skills_view,
+    skills_use,
+    skills_clear,
+    skills_config,
+    auth,
+    mcp,
+    cron,
+    hub,
+    claw,
+    pairing,
+    config,
+    setup,
     usage,
-    undo,
-    retry,
     help,
     quit,
     unknown,
 };
 
+pub const CommandSpec = struct {
+    id: CommandId,
+    literal: []const u8,
+    summary: []const u8,
+    takes_arg: bool = false,
+};
+
 pub const ParsedCommand = struct {
-    cmd: Command,
+    spec: CommandSpec,
     arg: ?[]const u8,
 };
 
-const command_map = std.StaticStringMap(Command).initComptime(.{
-    .{ "new", .new },
-    .{ "reset", .new },
-    .{ "model", .model },
-    .{ "personality", .personality },
-    .{ "tools", .tools },
-    .{ "skills", .skills },
-    .{ "compress", .compress },
-    .{ "usage", .usage },
-    .{ "undo", .undo },
-    .{ "retry", .retry },
-    .{ "help", .help },
-    .{ "quit", .quit },
-    .{ "exit", .quit },
-});
+const primary_specs = [_]CommandSpec{
+    .{ .id = .setup, .literal = "setup", .summary = "Configure provider, API key, and model" },
+    .{ .id = .config, .literal = "config", .summary = "Show current configuration" },
+    .{ .id = .model, .literal = "model", .summary = "Show or switch model", .takes_arg = true },
+    .{ .id = .new_session, .literal = "new", .summary = "Start a new conversation" },
+    .{ .id = .tools, .literal = "tools", .summary = "List available tools" },
+    .{ .id = .tools_config, .literal = "tools config", .summary = "Configure tool behavior", .takes_arg = true },
+    .{ .id = .skills, .literal = "skills", .summary = "List installed skills" },
+    .{ .id = .skills_view, .literal = "skills view", .summary = "View a skill body", .takes_arg = true },
+    .{ .id = .skills_use, .literal = "skills use", .summary = "Activate a skill for this session", .takes_arg = true },
+    .{ .id = .skills_clear, .literal = "skills clear", .summary = "Clear the active skill for this session" },
+    .{ .id = .skills_config, .literal = "skills config", .summary = "Show the resolved skills directory" },
+    .{ .id = .auth, .literal = "auth", .summary = "Manage auth credentials", .takes_arg = true },
+    .{ .id = .mcp, .literal = "mcp", .summary = "Configure MCP integrations", .takes_arg = true },
+    .{ .id = .cron, .literal = "cron", .summary = "Manage cron scheduler", .takes_arg = true },
+    .{ .id = .hub, .literal = "hub", .summary = "Browse the skills hub", .takes_arg = true },
+    .{ .id = .claw, .literal = "claw", .summary = "Run OpenClaw migration commands", .takes_arg = true },
+    .{ .id = .pairing, .literal = "pairing", .summary = "Manage pairing workflow", .takes_arg = true },
+    .{ .id = .usage, .literal = "usage", .summary = "Show token usage" },
+    .{ .id = .help, .literal = "help", .summary = "Show available commands" },
+    .{ .id = .quit, .literal = "quit", .summary = "Exit hermes-zig" },
+};
 
-/// Parse input as a slash command. Returns null if input doesn't start with '/'.
+const alias_specs = [_]struct { literal: []const u8, target: CommandId }{
+    .{ .literal = "reset", .target = .new_session },
+    .{ .literal = "exit", .target = .quit },
+};
+
+const unknown_spec = CommandSpec{
+    .id = .unknown,
+    .literal = "",
+    .summary = "",
+    .takes_arg = false,
+};
+
+pub fn allPrimarySpecs() []const CommandSpec {
+    return &primary_specs;
+}
+
 pub fn parseCommand(input: []const u8) ?ParsedCommand {
     const trimmed = std.mem.trim(u8, input, " \t\r\n");
     if (trimmed.len == 0 or trimmed[0] != '/') return null;
 
     const after_slash = trimmed[1..];
-    const space_idx = std.mem.indexOfScalar(u8, after_slash, ' ');
-    const name = if (space_idx) |i| after_slash[0..i] else after_slash;
-    const arg = if (space_idx) |i| std.mem.trim(u8, after_slash[i + 1 ..], " \t") else null;
-    const real_arg = if (arg) |a| (if (a.len == 0) null else a) else null;
-
-    const cmd = command_map.get(name) orelse .unknown;
-    return .{ .cmd = cmd, .arg = real_arg };
-}
-
-/// Action returned by command handlers.
-pub const Action = enum { none, quit, new_session };
-
-pub fn handleCommand(parsed: ParsedCommand, writer: anytype) !Action {
-    switch (parsed.cmd) {
-        .quit => return .quit,
-        .new => {
-            try writer.writeAll("Starting new session.\n");
-            return .new_session;
-        },
-        .help => {
-            try writer.writeAll(
-                \\Commands:
-                \\  /new, /reset    — new session
-                \\  /model [name]   — switch model
-                \\  /personality    — set personality
-                \\  /tools          — list tools
-                \\  /skills         — list skills
-                \\  /compress       — compress context
-                \\  /usage          — token usage
-                \\  /undo           — remove last turn
-                \\  /retry          — retry last message
-                \\  /help           — this help
-                \\  /quit           — exit
-                \\
-            );
-            return .none;
-        },
-        .model => {
-            if (parsed.arg) |m| {
-                try writer.print("Model set to: {s}\n", .{m});
-            } else {
-                try writer.writeAll("Usage: /model <provider:model>\n");
-            }
-            return .none;
-        },
-        .unknown => {
-            try writer.writeAll("Unknown command. Type /help for available commands.\n");
-            return .none;
-        },
-        else => {
-            try writer.print("/{s}: not yet implemented.\n", .{@tagName(parsed.cmd)});
-            return .none;
-        },
+    if (resolveSpec(after_slash)) |spec| {
+        const arg_text = std.mem.trim(u8, after_slash[spec.literal.len..], " \t");
+        return .{
+            .spec = spec,
+            .arg = if (arg_text.len > 0) arg_text else null,
+        };
     }
+
+    return .{
+        .spec = unknown_spec,
+        .arg = if (after_slash.len > 0) after_slash else null,
+    };
 }
 
-test "parseCommand with slash prefix returns command" {
+pub fn matchesForPrefix(prefix: []const u8, out: []usize) usize {
+    var count: usize = 0;
+    for (primary_specs, 0..) |spec, index| {
+        if (!std.mem.startsWith(u8, spec.literal, prefix)) continue;
+        if (count >= out.len) break;
+        out[count] = index;
+        count += 1;
+    }
+    return count;
+}
+
+pub fn renderHelp(writer: anytype) !void {
+    try writer.writeAll("\n  \x1b[1mCommands:\x1b[0m\n");
+    for (primary_specs) |spec| {
+        const suffix = if (spec.takes_arg) " <arg>" else "";
+        try writer.print("  /{s}{s} — {s}\n", .{ spec.literal, suffix, spec.summary });
+    }
+    try writer.writeByte('\n');
+}
+
+fn resolveSpec(input: []const u8) ?CommandSpec {
+    var best: ?CommandSpec = null;
+    var best_len: usize = 0;
+
+    for (primary_specs) |spec| {
+        if (!matchesLiteral(input, spec.literal)) continue;
+        if (spec.literal.len > best_len) {
+            best = spec;
+            best_len = spec.literal.len;
+        }
+    }
+
+    for (alias_specs) |alias| {
+        if (!matchesLiteral(input, alias.literal)) continue;
+        if (alias.literal.len > best_len) {
+            best = primarySpecFor(alias.target);
+            best_len = alias.literal.len;
+        }
+    }
+
+    return best;
+}
+
+fn primarySpecFor(id: CommandId) CommandSpec {
+    for (primary_specs) |spec| {
+        if (spec.id == id) return spec;
+    }
+    unreachable;
+}
+
+fn matchesLiteral(input: []const u8, literal: []const u8) bool {
+    if (!std.mem.startsWith(u8, input, literal)) return false;
+    if (input.len == literal.len) return true;
+    return input[literal.len] == ' ';
+}
+
+test "parseCommand resolves top-level command" {
     const result = parseCommand("/model gpt-4").?;
-    try std.testing.expectEqual(Command.model, result.cmd);
+    try std.testing.expectEqual(CommandId.model, result.spec.id);
     try std.testing.expectEqualStrings("gpt-4", result.arg.?);
 }
 
-test "parseCommand without slash returns null" {
-    try std.testing.expectEqual(null, parseCommand("hello"));
+test "parseCommand resolves longest multi-word command" {
+    const result = parseCommand("/skills use poetry-helper").?;
+    try std.testing.expectEqual(CommandId.skills_use, result.spec.id);
+    try std.testing.expectEqualStrings("poetry-helper", result.arg.?);
 }
 
-test "parseCommand /quit" {
-    const result = parseCommand("/quit").?;
-    try std.testing.expectEqual(Command.quit, result.cmd);
-    try std.testing.expectEqual(null, result.arg);
+test "parseCommand resolves alias" {
+    const result = parseCommand("/exit").?;
+    try std.testing.expectEqual(CommandId.quit, result.spec.id);
 }
 
-test "parseCommand /reset maps to new" {
-    const result = parseCommand("/reset").?;
-    try std.testing.expectEqual(Command.new, result.cmd);
-}
-
-test "parseCommand unknown command" {
-    const result = parseCommand("/foobar").?;
-    try std.testing.expectEqual(Command.unknown, result.cmd);
+test "matchesForPrefix returns filtered primary commands" {
+    var indices: [8]usize = undefined;
+    const count = matchesForPrefix("skills ", &indices);
+    try std.testing.expect(count >= 3);
+    try std.testing.expectEqualStrings("skills view", primary_specs[indices[0]].literal);
 }

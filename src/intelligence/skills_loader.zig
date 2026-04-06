@@ -52,13 +52,13 @@ pub fn parseSkillContent(allocator: std.mem.Allocator, content: []const u8) !?Sk
 }
 
 pub fn loadSkillsFromDir(allocator: std.mem.Allocator, dir_path: []const u8) ![]SkillDefinition {
-    var skills = std.ArrayList(SkillDefinition).init(allocator);
+    var skills = std.ArrayList(SkillDefinition){};
     errdefer {
         for (skills.items) |*s| s.deinit();
-        skills.deinit();
+        skills.deinit(allocator);
     }
 
-    var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch return skills.toOwnedSlice();
+    var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch return skills.toOwnedSlice(allocator);
     defer dir.close();
 
     var iter = dir.iterate();
@@ -67,11 +67,11 @@ pub fn loadSkillsFromDir(allocator: std.mem.Allocator, dir_path: []const u8) ![]
             const skill_path = try std.fmt.allocPrint(allocator, "{s}/{s}/SKILL.md", .{ dir_path, entry.name });
             defer allocator.free(skill_path);
             if (try loadSkill(allocator, skill_path)) |skill| {
-                try skills.append(skill);
+                try skills.append(allocator, skill);
             }
         }
     }
-    return skills.toOwnedSlice();
+    return skills.toOwnedSlice(allocator);
 }
 
 test "parseSkillContent parses frontmatter" {

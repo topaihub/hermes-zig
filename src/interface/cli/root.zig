@@ -29,18 +29,23 @@ pub const codex_models = @import("codex_models.zig");
 pub const copilot_auth = @import("copilot_auth.zig");
 pub const curses_ui = @import("curses_ui.zig");
 pub const pairing = @import("pairing.zig");
+pub const skills_runtime = @import("skills_runtime.zig");
+pub const input_controller = @import("input_controller.zig");
 
 // Re-export key types
 pub const RawMode = tui.RawMode;
 pub const InputReader = tui.InputReader;
-pub const Command = commands.Command;
+pub const CommandId = commands.CommandId;
+pub const CommandSpec = commands.CommandSpec;
 pub const ParsedCommand = commands.ParsedCommand;
 pub const parseCommand = commands.parseCommand;
-pub const handleCommand = commands.handleCommand;
+pub const renderCommandHelp = commands.renderHelp;
 pub const StreamDisplay = display.StreamDisplay;
 pub const History = history.History;
 pub const renderPrompt = tui.renderPrompt;
 pub const ansi = tui.ansi;
+pub const readInputLine = input_controller.readInputLine;
+pub const canUseInteractiveInput = input_controller.canUseInteractive;
 pub const SetupWizard = setup.SetupWizard;
 pub const AuthManager = auth.AuthManager;
 pub const ProfileManager = profiles.ProfileManager;
@@ -62,7 +67,15 @@ pub const saveClipboardImage = clipboard.saveClipboardImage;
 pub const MainCommand = main_entry.Command;
 pub const parseSubcommand = main_entry.parseSubcommand;
 pub const handleUninstall = uninstall.handleUninstall;
+pub const SkillsRuntime = skills_runtime.SkillsRuntime;
 
 comptime {
     @import("std").testing.refAllDecls(@This());
+}
+
+test {
+    _ = @import("commands.zig");
+    _ = @import("history.zig");
+    _ = @import("skills_runtime.zig");
+    _ = @import("input_controller.zig");
 }

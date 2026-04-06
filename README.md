@@ -117,9 +117,25 @@ The setup wizard creates `config.json`:
 | `/model` | Switch model |
 | `/config` | Show current configuration |
 | `/tools` | List available tools |
+| `/skills` | List installed skills |
+| `/skills view <name>` | View a skill |
+| `/skills use <name>` | Activate one skill for the current session |
+| `/skills clear` | Clear the active skill |
 | `/new` | Start new conversation |
 | `/help` | Show all commands |
 | `/quit` | Exit |
+
+### Slash Discovery
+
+When the terminal supports interactive input:
+
+- Type `/` to show available slash commands
+- Keep typing to filter matching commands
+- Use `Up` / `Down` to move through suggestions
+- Press `Tab` to complete the selected command
+- Press `Esc` to dismiss suggestions without submitting
+
+If the terminal does not support interactive input, hermes-zig automatically falls back to the original line-mode command entry.
 
 ### Chat
 
@@ -129,6 +145,23 @@ Just type a message and press Enter:
 hermes> Write a Python script that fetches weather data
 
 ⚡ Agent: [streaming response...]
+```
+
+### Skills
+
+Install skills under your Hermes home directory:
+
+- Linux/macOS: `~/.hermes/skills/<skill-name>/SKILL.md`
+- Windows: `%USERPROFILE%\\.hermes\\skills\\<skill-name>\\SKILL.md`
+
+Or set `HERMES_HOME` and place skills under `<HERMES_HOME>/skills/`.
+
+Example session:
+
+```text
+hermes> /skills
+hermes> /skills use poetry-helper
+hermes> 写一首七言绝句，题目为《春夜》
 ```
 
 ## Tools (50+)

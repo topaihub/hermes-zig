@@ -11,6 +11,8 @@ pub const security = @import("security/root.zig");
 pub const logging = @import("logging/root.zig");
 pub const web_server_mod = @import("web_server.zig");
 
+const CommandAction = enum { continue_session, new_session, quit };
+
 const banner =
     \\
     \\  _  _ ___ ___ __  __ ___ ___
@@ -21,12 +23,15 @@ const banner =
     \\
 ;
 
-const config_path = "config.json";
+const config_filename = "config.json";
+
+extern "kernel32" fn SetConsoleCP(wCodePageID: std.os.windows.UINT) callconv(.winapi) std.os.windows.BOOL;
 
 /// Enable UTF-8 and ANSI on Windows console
 fn initConsole() void {
     if (builtin.os.tag == .windows) {
         const kernel32 = std.os.windows.kernel32;
+        _ = SetConsoleCP(65001);
         _ = kernel32.SetConsoleOutputCP(65001);
         const handle = kernel32.GetStdHandle(std.os.windows.STD_OUTPUT_HANDLE);
         if (handle) |h| {
@@ -57,6 +62,64 @@ fn writeF(stdout: std.fs.File, allocator: std.mem.Allocator, comptime fmt: []con
     try stdout.writeAll(msg);
 }
 
+fn resolveConfigPathAlloc(allocator: std.mem.Allocator) ![]u8 {
+    const exe_config = try exeRelativePathAlloc(allocator, config_filename);
+    errdefer allocator.free(exe_config);
+
+    if (pathExists(exe_config)) {
+        return exe_config;
+    }
+    if (pathExists(config_filename)) {
+        allocator.free(exe_config);
+        return allocator.dupe(u8, config_filename);
+    }
+    return exe_config;
+}
+
+fn configBaseDirAlloc(allocator: std.mem.Allocator, config_path: []const u8) ![]u8 {
+    const dir = std.fs.path.dirname(config_path) orelse ".";
+    return allocator.dupe(u8, dir);
+}
+
+fn resolvePathFromBaseAlloc(allocator: std.mem.Allocator, base_dir: []const u8, maybe_relative_path: []const u8) ![]u8 {
+    if (std.fs.path.isAbsolute(maybe_relative_path)) {
+        return allocator.dupe(u8, maybe_relative_path);
+    }
+    return std.fs.path.join(allocator, &.{ base_dir, maybe_relative_path });
+}
+
+fn exeRelativePathAlloc(allocator: std.mem.Allocator, filename: []const u8) ![]u8 {
+    const exe_path = try std.fs.selfExePathAlloc(allocator);
+    defer allocator.free(exe_path);
+    const exe_dir = std.fs.path.dirname(exe_path) orelse ".";
+    return std.fs.path.join(allocator, &.{ exe_dir, filename });
+}
+
+fn pathExists(path: []const u8) bool {
+    if (std.fs.path.isAbsolute(path)) {
+        std.fs.accessAbsolute(path, .{}) catch return false;
+        return true;
+    }
+    std.fs.cwd().access(path, .{}) catch return false;
+    return true;
+}
+
+fn createConfigFile(config_path: []const u8) !std.fs.File {
+    if (std.fs.path.isAbsolute(config_path)) {
+        return std.fs.createFileAbsolute(config_path, .{});
+    }
+    return std.fs.cwd().createFile(config_path, .{});
+}
+
+fn readConfigFileAlloc(allocator: std.mem.Allocator, config_path: []const u8, max_bytes: usize) ![]u8 {
+    if (std.fs.path.isAbsolute(config_path)) {
+        const file = try std.fs.openFileAbsolute(config_path, .{});
+        defer file.close();
+        return file.readToEndAlloc(allocator, max_bytes);
+    }
+    return std.fs.cwd().readFileAlloc(allocator, config_path, max_bytes);
+}
+
 pub fn main() !void {
     initConsole();
     const stdout = std.fs.File.stdout();
@@ -65,6 +128,10 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
+    const config_path = try resolveConfigPathAlloc(allocator);
+    defer allocator.free(config_path);
+    const config_base_dir = try configBaseDirAlloc(allocator, config_path);
+    defer allocator.free(config_base_dir);
 
     try stdout.writeAll("\x1b[36m" ++ banner ++ "\x1b[0m\n");
 
@@ -81,14 +148,14 @@ pub fn main() !void {
         loaded_cfg = core.config_loader.loadFromFile(config_path, allocator) catch |err| {
             if (err == error.FileNotFound) {
                 // Generate default config.json
-                var df = std.fs.cwd().createFile(config_path, .{}) catch {
+                var df = createConfigFile(config_path) catch {
                     break :blk core.Config{};
                 };
                 defer df.close();
                 df.writeAll(default_config) catch {};
                 try stdout.writeAll("  Generated default config.json\n");
                 try stdout.writeAll("  Starting setup wizard...\n\n");
-                try runSetupWizard(allocator, stdout, stdin);
+                try runSetupWizard(allocator, stdout, stdin, config_path);
                 break :blk core.Config{};
             }
             try writeF(stdout, allocator, "  Config error: {s}\n", .{@errorName(err)});
@@ -122,7 +189,9 @@ pub fn main() !void {
     defer if (has_json_file_sink) json_file_sink.deinit();
 
     if (usesTextLogFormat(cfg.logging.log_format)) {
-        const trace_log_path = try std.fmt.allocPrint(allocator, "{s}/hermes-trace.log", .{cfg.logging.log_dir});
+        const trace_log_dir = try resolvePathFromBaseAlloc(allocator, config_base_dir, cfg.logging.log_dir);
+        defer allocator.free(trace_log_dir);
+        const trace_log_path = try std.fs.path.join(allocator, &.{ trace_log_dir, "hermes-trace.log" });
         defer allocator.free(trace_log_path);
 
         trace_file_sink = try framework.TraceTextFileSink.init(
@@ -141,8 +210,10 @@ pub fn main() !void {
     }
 
     if (usesJsonLogFormat(cfg.logging.log_format)) {
+        const json_log_dir = try resolvePathFromBaseAlloc(allocator, config_base_dir, cfg.logging.log_dir);
+        defer allocator.free(json_log_dir);
         json_file_sink = framework.RotatingFileSink.init(allocator, .{
-            .log_dir = cfg.logging.log_dir,
+            .log_dir = json_log_dir,
             .prefix = if (usesTextLogFormat(cfg.logging.log_format)) "hermes-json" else "hermes",
             .max_file_bytes = cfg.logging.max_file_bytes,
             .format = .json,
@@ -161,7 +232,10 @@ pub fn main() !void {
     log.info("hermes agent starting", &.{});
 
     // Start web config server in background
-    var web_server = web_server_mod.WebConfigServer{ .allocator = allocator };
+    var web_server = web_server_mod.WebConfigServer{
+        .allocator = allocator,
+        .config_path = config_path,
+    };
     const web_thread = std.Thread.spawn(.{}, web_server_mod.WebConfigServer.start, .{&web_server}) catch null;
 
     try stdout.writeAll("  Config UI: \x1b[36mhttp://127.0.0.1:8318\x1b[0m\n\n");
@@ -173,6 +247,10 @@ pub fn main() !void {
 
     var tool_reg = tools.registry.ToolRegistry.init(allocator, &.{});
     defer tool_reg.deinit();
+
+    var skills_runtime = try interface.cli.SkillsRuntime.init(allocator);
+    defer skills_runtime.deinit();
+    skills_runtime.reload() catch {};
 
     // Load soul for system prompt
     const hermes_home = try core.soul.getHermesHome(allocator);
@@ -198,15 +276,24 @@ pub fn main() !void {
     try stdout.writeAll("  \x1b[90m/setup\x1b[0m  — Configure provider and API key\n");
     try stdout.writeAll("  \x1b[90m/model\x1b[0m  — Switch model\n");
     try stdout.writeAll("  \x1b[90m/config\x1b[0m — Show current config\n");
+    try stdout.writeAll("  \x1b[90m/skills\x1b[0m — List or activate installed skills\n");
+    if (interface.cli.canUseInteractiveInput(stdin, stdout)) {
+        try stdout.writeAll("  Type \x1b[90m/\x1b[0m for command suggestions, \x1b[90mTab\x1b[0m to complete\n");
+    }
     try stdout.writeAll("  \x1b[90m/help\x1b[0m   — Show all commands\n");
     try stdout.writeAll("  \x1b[90m/quit\x1b[0m   — Exit\n\n");
 
-    var request_seq: u64 = 0;
-    var line_buf: [4096]u8 = undefined;
-    while (true) {
-        try stdout.writeAll("\x1b[36mhermes>\x1b[0m ");
+    var history = interface.cli.History.init(allocator);
+    defer history.deinit();
 
-        const raw = try readLine(stdin, &line_buf) orelse break;
+    var request_seq: u64 = 0;
+    while (true) {
+        if (!interface.cli.canUseInteractiveInput(stdin, stdout)) {
+            try stdout.writeAll("\x1b[36mhermes>\x1b[0m ");
+        }
+
+        const raw = try interface.cli.readInputLine(allocator, stdin, stdout, &history) orelse break;
+        defer allocator.free(raw);
         const input = std.mem.trim(u8, raw, " \t\r\n");
         if (input.len == 0) continue;
 
@@ -218,13 +305,26 @@ pub fn main() !void {
             var request_trace = try framework.observability.request_trace.begin(allocator, app_ctx.logger, .cli, request_id, "COMMAND", input, null);
             defer request_trace.deinit();
 
-            const handled = handleCommand(allocator, input, stdout, stdin) catch |err| {
+            const action = handleCommand(allocator, input, stdout, stdin, config_path, &skills_runtime) catch |err| {
                 framework.observability.request_trace.complete(app_ctx.logger, &request_trace, 500, @errorName(err));
                 return err;
             };
 
-            framework.observability.request_trace.complete(app_ctx.logger, &request_trace, if (handled) 200 else 204, null);
-            if (!handled) break; // /quit
+            const status_code: u16 = switch (action) {
+                .continue_session => 200,
+                .new_session => 200,
+                .quit => 204,
+            };
+            framework.observability.request_trace.complete(app_ctx.logger, &request_trace, status_code, null);
+
+            switch (action) {
+                .continue_session => {},
+                .new_session => {
+                    skills_runtime.clearActive();
+                    try resetConversation(allocator, &conversation, soul_text);
+                },
+                .quit => break,
+            }
             continue;
         }
 
@@ -243,6 +343,8 @@ pub fn main() !void {
         }
 
         try conversation.append(allocator, .{ .role = .user, .content = try allocator.dupe(u8, input) });
+        const request_messages = try buildRequestMessages(allocator, &cfg, soul_text, &skills_runtime, conversation.items);
+        defer freeRequestMessages(allocator, request_messages);
 
         const llm_client = resolved_provider.?.asLlmClient();
         var agent_loop = agent.AgentLoop{
@@ -253,7 +355,7 @@ pub fn main() !void {
             .logger = app_ctx.logger,
         };
 
-        var result = agent_loop.run(conversation.items, &.{}) catch |err| {
+        var result = agent_loop.run(request_messages, &.{}) catch |err| {
             framework.observability.request_trace.complete(app_ctx.logger, &request_trace, 500, @errorName(err));
             try writeF(stdout, allocator, "\n  \x1b[31mError:\x1b[0m {s}\n\n", .{@errorName(err)});
             continue;
@@ -275,177 +377,264 @@ pub fn main() !void {
     try stdout.writeAll("\n  Goodbye! 👋\n");
 }
 
-fn handleCommand(allocator: std.mem.Allocator, input: []const u8, stdout: std.fs.File, stdin: std.fs.File) !bool {
-    if (std.mem.eql(u8, input, "/quit") or std.mem.eql(u8, input, "/exit")) return false;
+fn handleCommand(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    stdout: std.fs.File,
+    stdin: std.fs.File,
+    config_path: []const u8,
+    skills_runtime: *interface.cli.SkillsRuntime,
+) !CommandAction {
+    const parsed = interface.cli.parseCommand(input) orelse return .continue_session;
 
-    if (std.mem.eql(u8, input, "/setup")) {
-        try runSetupWizard(allocator, stdout, stdin);
-        return true;
-    }
-
-    if (std.mem.eql(u8, input, "/config")) {
-        try showConfig(allocator, stdout);
-        return true;
-    }
-
-    if (std.mem.startsWith(u8, input, "/model")) {
-        const arg = std.mem.trim(u8, input[6..], " ");
-        if (arg.len == 0) {
-            // Load config and show available models
-            const content = std.fs.cwd().readFileAlloc(allocator, config_path, 64 * 1024) catch {
-                try stdout.writeAll("\n  No config found. Run /setup first.\n\n");
-                return true;
-            };
-            defer allocator.free(content);
-
-            var loaded = core.config_loader.loadFromString(content, allocator) catch {
-                try stdout.writeAll("\n  Config parse error.\n\n");
-                return true;
-            };
-            defer loaded.deinit();
-            const cfg = loaded.parsed.value;
-
-            try writeF(stdout, allocator, "\n  \x1b[1mCurrent model:\x1b[0m \x1b[32m{s}\x1b[0m\n", .{cfg.model});
-
-            if (cfg.models.len > 0) {
-                try stdout.writeAll("\n  \x1b[1mAvailable models:\x1b[0m\n");
-                for (cfg.models) |m| {
-                    try writeF(stdout, allocator, "    • {s}\n", .{m});
-                }
-            } else {
-                try stdout.writeAll("\n  No models configured. Add a \"models\" array to config.json:\n");
-                try stdout.writeAll("  \x1b[90m\"models\": [\"gpt-4o\", \"claude-sonnet-4\", \"gemini-2.5-pro\"]\x1b[0m\n");
-            }
-            try stdout.writeAll("\n  Usage: /model <name>\n\n");
-            return true;
-        } else {
-            // Update model in config
-            const content = std.fs.cwd().readFileAlloc(allocator, config_path, 64 * 1024) catch {
-                try stdout.writeAll("\n  No config found. Run /setup first.\n\n");
-                return true;
-            };
-            defer allocator.free(content);
-            // Simple replace: find "model": "..." and replace value
-            if (std.mem.indexOf(u8, content, "\"model\"")) |_| {
-                var parsed = std.json.parseFromSlice(std.json.Value, allocator, content, .{}) catch {
-                    try stdout.writeAll("\n  Config parse error.\n\n");
-                    return true;
+    switch (parsed.spec.id) {
+        .quit => return .quit,
+        .setup => {
+            try runSetupWizard(allocator, stdout, stdin, config_path);
+            return .continue_session;
+        },
+        .config => {
+            try showConfig(allocator, stdout, config_path);
+            return .continue_session;
+        },
+        .model => {
+            if (parsed.arg == null) {
+                const content = readConfigFileAlloc(allocator, config_path, 64 * 1024) catch {
+                    try stdout.writeAll("\n  No config found. Run /setup first.\n\n");
+                    return .continue_session;
                 };
-                defer parsed.deinit();
-                // Write new config with updated model
+                defer allocator.free(content);
+
+                var loaded = core.config_loader.loadFromString(content, allocator) catch {
+                    try stdout.writeAll("\n  Config parse error.\n\n");
+                    return .continue_session;
+                };
+                defer loaded.deinit();
+                const cfg = loaded.parsed.value;
+
+                try writeF(stdout, allocator, "\n  \x1b[1mCurrent model:\x1b[0m \x1b[32m{s}\x1b[0m\n", .{cfg.model});
+                if (cfg.models.len > 0) {
+                    try stdout.writeAll("\n  \x1b[1mAvailable models:\x1b[0m\n");
+                    for (cfg.models) |m| {
+                        try writeF(stdout, allocator, "    • {s}\n", .{m});
+                    }
+                } else {
+                    try stdout.writeAll("\n  No models configured. Add a \"models\" array to config.json:\n");
+                    try stdout.writeAll("  \x1b[90m\"models\": [\"gpt-4o\", \"claude-sonnet-4\", \"gemini-2.5-pro\"]\x1b[0m\n");
+                }
+                try stdout.writeAll("\n  Usage: /model <name>\n\n");
+                return .continue_session;
+            }
+
+            const content = readConfigFileAlloc(allocator, config_path, 64 * 1024) catch {
+                try stdout.writeAll("\n  No config found. Run /setup first.\n\n");
+                return .continue_session;
+            };
+            defer allocator.free(content);
+            if (std.mem.indexOf(u8, content, "\"model\"")) |_| {
+                var parsed_json = std.json.parseFromSlice(std.json.Value, allocator, content, .{}) catch {
+                    try stdout.writeAll("\n  Config parse error.\n\n");
+                    return .continue_session;
+                };
+                defer parsed_json.deinit();
                 const new_cfg = try std.fmt.allocPrint(allocator, "{s}", .{content});
                 defer allocator.free(new_cfg);
-                // Simple approach: rewrite config via setup values
-                try writeF(stdout, allocator, "\n  Model switched to: \x1b[32m{s}\x1b[0m\n\n", .{arg});
+                try writeF(stdout, allocator, "\n  Model switched to: \x1b[32m{s}\x1b[0m\n\n", .{parsed.arg.?});
             }
-        }
-        return true;
+            return .continue_session;
+        },
+        .skills => {
+            try renderSkillsList(allocator, stdout, skills_runtime);
+            return .continue_session;
+        },
+        .skills_config => {
+            try writeF(stdout, allocator, "\n  \x1b[1mSkills Directory:\x1b[0m\n    {s}\n\n", .{skills_runtime.skills_dir});
+            return .continue_session;
+        },
+        .skills_view => {
+            const name = parsed.arg orelse {
+                try stdout.writeAll("\n  Usage: /skills view <name>\n\n");
+                return .continue_session;
+            };
+            try renderSkillView(allocator, stdout, skills_runtime, name);
+            return .continue_session;
+        },
+        .skills_use => {
+            const name = parsed.arg orelse {
+                try stdout.writeAll("\n  Usage: /skills use <name>\n\n");
+                return .continue_session;
+            };
+            try activateSkill(allocator, stdout, skills_runtime, name);
+            return .continue_session;
+        },
+        .skills_clear => {
+            skills_runtime.clearActive();
+            try stdout.writeAll("\n  Cleared active skill for this session.\n\n");
+            return .continue_session;
+        },
+        .auth => {
+            try @import("interface/cli/auth_cmd.zig").handleAuthCommand(allocator, parsed.arg orelse "", stdout);
+            return .continue_session;
+        },
+        .tools_config => {
+            try @import("interface/cli/tools_config.zig").handleToolsCommand(allocator, parsed.arg orelse "", stdout);
+            return .continue_session;
+        },
+        .mcp => {
+            try @import("interface/cli/mcp_config.zig").handleMcpCommand(allocator, parsed.arg orelse "", stdout);
+            return .continue_session;
+        },
+        .cron => {
+            try @import("interface/cli/cron_cmd.zig").handleCronCommand(allocator, parsed.arg orelse "", stdout);
+            return .continue_session;
+        },
+        .hub => {
+            try @import("interface/cli/skills_hub_cmd.zig").handleSkillsHubCommand(allocator, parsed.arg orelse "", stdout);
+            return .continue_session;
+        },
+        .claw => {
+            try @import("interface/cli/claw.zig").handleClawCommand(allocator, parsed.arg orelse "", stdout);
+            return .continue_session;
+        },
+        .pairing => {
+            try @import("interface/cli/pairing.zig").handlePairingCommand(allocator, parsed.arg orelse "", stdout);
+            return .continue_session;
+        },
+        .usage => {
+            try stdout.writeAll("\n  \x1b[1mUsage:\x1b[0m\n");
+            try stdout.writeAll("    Prompt tokens:     0\n");
+            try stdout.writeAll("    Completion tokens: 0\n");
+            try stdout.writeAll("    Total tokens:      0\n\n");
+            return .continue_session;
+        },
+        .help => {
+            var buf: [8192]u8 = undefined;
+            var writer = stdout.writer(&buf);
+            try interface.cli.commands.renderHelp(&writer.interface);
+            try writer.interface.flush();
+            return .continue_session;
+        },
+        .tools => {
+            try stdout.writeAll("\n  \x1b[1mAvailable Tools:\x1b[0m\n");
+            const tool_names = [_][]const u8{
+                "terminal",       "read_file",     "write_file",    "patch",           "search_files",
+                "web_search",     "web_extract",   "execute_code",  "todo",            "memory",
+                "clarify",        "delegate_task", "send_message",  "image_generate",
+                "text_to_speech", "vision_analyze", "cronjob",      "session_search",
+                "skills_list",    "skill_view",    "skill_manage",  "checkpoint",      "process",
+            };
+            for (tool_names) |name| {
+                try writeF(stdout, allocator, "    • {s}\n", .{name});
+            }
+            try stdout.writeAll("\n");
+            return .continue_session;
+        },
+        .new_session => {
+            try stdout.writeAll("\n  ✨ New conversation started.\n\n");
+            return .new_session;
+        },
+        .unknown => {
+            try writeF(stdout, allocator, "\n  Unknown command: {s}. Type /help for available commands.\n\n", .{input});
+            return .continue_session;
+        },
     }
-
-    if (std.mem.eql(u8, input, "/skills")) {
-        try stdout.writeAll("\n  \x1b[1mSkills:\x1b[0m\n");
-        try stdout.writeAll("    No skills loaded. Place SKILL.md files in ~/.hermes/skills/\n\n");
-        return true;
-    }
-
-    if (std.mem.startsWith(u8, input, "/skills config")) {
-        try stdout.writeAll("\n  \x1b[1mSkills Configuration:\x1b[0m\n");
-        try stdout.writeAll("    Skills: place SKILL.md files in ~/.hermes/skills/\n");
-        try stdout.writeAll("    Each skill needs a SKILL.md with name, description, and triggers.\n\n");
-        return true;
-    }
-
-    if (std.mem.startsWith(u8, input, "/auth")) {
-        const arg = std.mem.trim(u8, input[5..], " ");
-        try @import("interface/cli/auth_cmd.zig").handleAuthCommand(allocator, arg, stdout);
-        return true;
-    }
-
-    if (std.mem.startsWith(u8, input, "/tools config")) {
-        const arg = std.mem.trim(u8, input[13..], " ");
-        try @import("interface/cli/tools_config.zig").handleToolsCommand(allocator, arg, stdout);
-        return true;
-    }
-
-    if (std.mem.startsWith(u8, input, "/mcp")) {
-        const arg = std.mem.trim(u8, input[4..], " ");
-        try @import("interface/cli/mcp_config.zig").handleMcpCommand(allocator, arg, stdout);
-        return true;
-    }
-
-    if (std.mem.startsWith(u8, input, "/cron")) {
-        const arg = std.mem.trim(u8, input[5..], " ");
-        try @import("interface/cli/cron_cmd.zig").handleCronCommand(allocator, arg, stdout);
-        return true;
-    }
-
-    if (std.mem.startsWith(u8, input, "/hub")) {
-        const arg = std.mem.trim(u8, input[4..], " ");
-        try @import("interface/cli/skills_hub_cmd.zig").handleSkillsHubCommand(allocator, arg, stdout);
-        return true;
-    }
-
-    if (std.mem.startsWith(u8, input, "/claw")) {
-        const arg = std.mem.trim(u8, input[5..], " ");
-        try @import("interface/cli/claw.zig").handleClawCommand(allocator, arg, stdout);
-        return true;
-    }
-
-    if (std.mem.startsWith(u8, input, "/pairing")) {
-        const arg = std.mem.trim(u8, input[8..], " ");
-        try @import("interface/cli/pairing.zig").handlePairingCommand(allocator, arg, stdout);
-        return true;
-    }
-
-    if (std.mem.eql(u8, input, "/usage")) {
-        try stdout.writeAll("\n  \x1b[1mUsage:\x1b[0m\n");
-        try stdout.writeAll("    Prompt tokens:     0\n");
-        try stdout.writeAll("    Completion tokens: 0\n");
-        try stdout.writeAll("    Total tokens:      0\n\n");
-        return true;
-    }
-
-    if (std.mem.eql(u8, input, "/help")) {
-        try stdout.writeAll("\n  \x1b[1mCommands:\x1b[0m\n");
-        try stdout.writeAll("  /setup         — Configure provider, API key, model\n");
-        try stdout.writeAll("  /model         — Switch model\n");
-        try stdout.writeAll("  /config        — Show current configuration\n");
-        try stdout.writeAll("  /new           — Start new conversation\n");
-        try stdout.writeAll("  /tools         — List available tools\n");
-        try stdout.writeAll("  /skills        — List available skills\n");
-        try stdout.writeAll("  /skills config — Configure skills directory\n");
-        try stdout.writeAll("  /cron          — Cron scheduler info\n");
-        try stdout.writeAll("  /usage         — Show token usage\n");
-        try stdout.writeAll("  /quit          — Exit\n\n");
-        return true;
-    }
-
-    if (std.mem.eql(u8, input, "/tools")) {
-        try stdout.writeAll("\n  \x1b[1mAvailable Tools:\x1b[0m\n");
-        const tool_names = [_][]const u8{
-            "terminal",       "read_file",     "write_file",    "patch",           "search_files",
-            "web_search",     "web_extract",   "execute_code",  "todo",            "memory",
-            "clarify",        "delegate_task", "send_message",  "image_generate",
-            "text_to_speech", "vision_analyze", "cronjob",      "session_search",
-            "skills_list",    "skill_view",    "skill_manage",  "checkpoint",      "process",
-        };
-        for (tool_names) |name| {
-            try writeF(stdout, allocator, "    • {s}\n", .{name});
-        }
-        try stdout.writeAll("\n");
-        return true;
-    }
-
-    if (std.mem.eql(u8, input, "/new")) {
-        try stdout.writeAll("\n  ✨ New conversation started.\n\n");
-        return true;
-    }
-
-    try writeF(stdout, allocator, "\n  Unknown command: {s}. Type /help for available commands.\n\n", .{input});
-    return true;
 }
 
-fn runSetupWizard(allocator: std.mem.Allocator, stdout: std.fs.File, stdin: std.fs.File) !void {
+fn resetConversation(allocator: std.mem.Allocator, conversation: *std.ArrayList(core.Message), soul_text: []const u8) !void {
+    if (conversation.items.len > 1) {
+        for (conversation.items[1..]) |msg| {
+            allocator.free(msg.content);
+        }
+    }
+    try conversation.resize(allocator, 1);
+    conversation.items[0] = .{ .role = .system, .content = soul_text };
+}
+
+fn buildRequestMessages(
+    allocator: std.mem.Allocator,
+    cfg: *const core.Config,
+    soul_text: []const u8,
+    skills_runtime: *const interface.cli.SkillsRuntime,
+    conversation: []const core.Message,
+) ![]core.Message {
+    const prompt = try agent.prompt_builder.buildSystemPrompt(
+        allocator,
+        cfg,
+        soul_text,
+        if (skills_runtime.active) |*skill| skill else null,
+    );
+    errdefer allocator.free(prompt);
+
+    var messages = try allocator.alloc(core.Message, conversation.len);
+    messages[0] = .{ .role = .system, .content = prompt };
+    for (conversation[1..], 1..) |msg, index| {
+        messages[index] = msg;
+    }
+    return messages;
+}
+
+fn freeRequestMessages(allocator: std.mem.Allocator, messages: []core.Message) void {
+    if (messages.len > 0) allocator.free(messages[0].content);
+    allocator.free(messages);
+}
+
+fn renderSkillsList(allocator: std.mem.Allocator, stdout: std.fs.File, skills_runtime: *interface.cli.SkillsRuntime) !void {
+    try skills_runtime.reload();
+    try stdout.writeAll("\n  \x1b[1mSkills:\x1b[0m\n");
+    if (!skills_runtime.hasInstalledSkills()) {
+        try writeF(stdout, allocator, "    No skills found in {s}\n\n", .{skills_runtime.skills_dir});
+        return;
+    }
+
+    for (skills_runtime.installed) |skill| {
+        const active_marker = if (skills_runtime.activeName()) |active_name|
+            if (std.mem.eql(u8, active_name, skill.name)) " (active)" else ""
+        else
+            "";
+        try writeF(stdout, allocator, "    • {s}{s}\n", .{ skill.name, active_marker });
+        if (skill.description.len > 0) {
+            try writeF(stdout, allocator, "      {s}\n", .{skill.description});
+        }
+    }
+    try stdout.writeAll("\n");
+}
+
+fn renderSkillView(
+    allocator: std.mem.Allocator,
+    stdout: std.fs.File,
+    skills_runtime: *interface.cli.SkillsRuntime,
+    name: []const u8,
+) !void {
+    try skills_runtime.reload();
+    const skill = skills_runtime.findInstalled(name) orelse {
+        try writeF(stdout, allocator, "\n  Skill not found: {s}\n\n", .{name});
+        return;
+    };
+
+    try writeF(stdout, allocator, "\n  \x1b[1mSkill:\x1b[0m {s}\n", .{skill.name});
+    if (skill.description.len > 0) {
+        try writeF(stdout, allocator, "  \x1b[1mDescription:\x1b[0m {s}\n", .{skill.description});
+    }
+    try stdout.writeAll("\n");
+    try stdout.writeAll(skill.body);
+    try stdout.writeAll("\n\n");
+}
+
+fn activateSkill(
+    allocator: std.mem.Allocator,
+    stdout: std.fs.File,
+    skills_runtime: *interface.cli.SkillsRuntime,
+    name: []const u8,
+) !void {
+    try skills_runtime.reload();
+    if (!(try skills_runtime.activate(name))) {
+        try writeF(stdout, allocator, "\n  Skill not found: {s}\n\n", .{name});
+        return;
+    }
+    try writeF(stdout, allocator, "\n  Activated skill: {s}\n\n", .{skills_runtime.active.?.name});
+}
+
+fn runSetupWizard(allocator: std.mem.Allocator, stdout: std.fs.File, stdin: std.fs.File, config_path: []const u8) !void {
     try stdout.writeAll("\n  \x1b[1m═══ Setup Wizard ═══\x1b[0m\n\n");
 
     // Provider selection
@@ -537,7 +726,7 @@ fn runSetupWizard(allocator: std.mem.Allocator, stdout: std.fs.File, stdin: std.
     const config_json = try buildSetupConfigJson(allocator, provider, model, api_key, api_base_url, wire_api);
     defer allocator.free(config_json);
 
-    var file = try std.fs.cwd().createFile(config_path, .{});
+    var file = try createConfigFile(config_path);
     defer file.close();
     try file.writeAll(config_json);
 
@@ -584,8 +773,8 @@ fn usesJsonLogFormat(log_format: []const u8) bool {
     return std.mem.eql(u8, log_format, "json") or std.mem.eql(u8, log_format, "both");
 }
 
-fn showConfig(allocator: std.mem.Allocator, stdout: std.fs.File) !void {
-    const content = std.fs.cwd().readFileAlloc(allocator, config_path, 64 * 1024) catch |err| {
+fn showConfig(allocator: std.mem.Allocator, stdout: std.fs.File, config_path: []const u8) !void {
+    const content = readConfigFileAlloc(allocator, config_path, 64 * 1024) catch |err| {
         try writeF(stdout, allocator, "\n  No config found: {s}\n\n", .{@errorName(err)});
         return;
     };
@@ -599,6 +788,14 @@ fn showConfig(allocator: std.mem.Allocator, stdout: std.fs.File) !void {
 
 test "framework import" {
     _ = framework;
+}
+
+test "cli command and skill modules are included in root test suite" {
+    _ = @import("interface/cli/commands.zig");
+    _ = @import("interface/cli/history.zig");
+    _ = @import("interface/cli/input_controller.zig");
+    _ = @import("interface/cli/skills_runtime.zig");
+    _ = @import("agent/prompt_builder.zig");
 }
 
 test "Platform.displayName returns non-empty strings" {

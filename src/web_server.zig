@@ -60,7 +60,7 @@ pub const WebConfigServer = struct {
                 .keep_alive = false,
             });
         } else if (method == .GET and std.mem.eql(u8, target, "/api/config")) {
-            const data = std.fs.cwd().readFileAlloc(self.allocator, self.config_path, 1024 * 1024) catch |err| {
+            const data = readConfigFileAlloc(self.allocator, self.config_path, 1024 * 1024) catch |err| {
                 const msg = if (err == error.FileNotFound) "{}" else "{\"error\":\"read failed\"}";
                 try req.respond(msg, .{
                     .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }},
@@ -88,7 +88,7 @@ pub const WebConfigServer = struct {
                 };
                 defer self.allocator.free(body);
 
-                var file = std.fs.cwd().createFile(self.config_path, .{}) catch {
+                var file = createConfigFile(self.config_path) catch {
                     try req.respond("{\"error\":\"write failed\"}", .{
                         .status = .internal_server_error,
                         .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }},
@@ -133,6 +133,22 @@ pub const WebConfigServer = struct {
         }
     }
 };
+
+fn createConfigFile(config_path: []const u8) !std.fs.File {
+    if (std.fs.path.isAbsolute(config_path)) {
+        return std.fs.createFileAbsolute(config_path, .{});
+    }
+    return std.fs.cwd().createFile(config_path, .{});
+}
+
+fn readConfigFileAlloc(allocator: std.mem.Allocator, config_path: []const u8, max_bytes: usize) ![]u8 {
+    if (std.fs.path.isAbsolute(config_path)) {
+        const file = try std.fs.openFileAbsolute(config_path, .{});
+        defer file.close();
+        return file.readToEndAlloc(allocator, max_bytes);
+    }
+    return std.fs.cwd().readFileAlloc(allocator, config_path, max_bytes);
+}
 
 test "WebConfigServer struct init" {
     var server = WebConfigServer{

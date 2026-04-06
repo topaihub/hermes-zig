@@ -1,0 +1,420 @@
+const std = @import("std");
+const builtin = @import("builtin");
+const commands = @import("commands.zig");
+const history_mod = @import("history.zig");
+const tui = @import("tui.zig");
+
+const windows = std.os.windows;
+const kernel32 = windows.kernel32;
+
+const KEY_EVENT: windows.WORD = 0x0001;
+const ENABLE_PROCESSED_INPUT: windows.DWORD = 0x0001;
+const ENABLE_LINE_INPUT: windows.DWORD = 0x0002;
+const ENABLE_ECHO_INPUT: windows.DWORD = 0x0004;
+
+const VK_TAB: windows.WORD = 0x09;
+const VK_RETURN: windows.WORD = 0x0D;
+const VK_ESCAPE: windows.WORD = 0x1B;
+const VK_BACK: windows.WORD = 0x08;
+const VK_UP: windows.WORD = 0x26;
+const VK_DOWN: windows.WORD = 0x28;
+
+const KeyEventRecord = extern struct {
+    bKeyDown: windows.BOOL,
+    wRepeatCount: windows.WORD,
+    wVirtualKeyCode: windows.WORD,
+    wVirtualScanCode: windows.WORD,
+    uChar: extern union {
+        UnicodeChar: windows.WCHAR,
+        AsciiChar: u8,
+    },
+    dwControlKeyState: windows.DWORD,
+};
+
+const InputRecord = extern struct {
+    EventType: windows.WORD,
+    Event: extern union {
+        KeyEvent: KeyEventRecord,
+        padding: [16]u8,
+    },
+};
+
+extern "kernel32" fn ReadConsoleInputW(
+    hConsoleInput: ?windows.HANDLE,
+    lpBuffer: [*]InputRecord,
+    nLength: windows.DWORD,
+    lpNumberOfEventsRead: *windows.DWORD,
+) callconv(.winapi) windows.BOOL;
+
+pub fn canUseInteractive(stdin: std.fs.File, stdout: std.fs.File) bool {
+    return stdin.isTty() and stdout.getOrEnableAnsiEscapeSupport();
+}
+
+pub fn readInputLine(
+    allocator: std.mem.Allocator,
+    stdin: std.fs.File,
+    stdout: std.fs.File,
+    history: *history_mod.History,
+) !?[]u8 {
+    if (!canUseInteractive(stdin, stdout)) {
+        const line = try readLineFallback(allocator, stdin);
+        if (line) |text| {
+            if (text.len > 0) try history.add(text);
+        }
+        return line;
+    }
+
+    return switch (builtin.os.tag) {
+        .windows => readInteractiveWindows(allocator, stdin, stdout, history),
+        else => readInteractivePosix(allocator, stdin, stdout, history),
+    };
+}
+
+const Key = union(enum) {
+    char: []u8,
+    enter,
+    backspace,
+    tab,
+    escape,
+    up,
+    down,
+    unknown,
+};
+
+const Editor = struct {
+    allocator: std.mem.Allocator,
+    buffer: std.ArrayList(u8) = .{},
+    suggestions: [16]usize = undefined,
+    suggestion_count: usize = 0,
+    selected_index: usize = 0,
+    suggestions_visible: bool = false,
+
+    fn deinit(self: *Editor) void {
+        self.buffer.deinit(self.allocator);
+    }
+
+    fn appendText(self: *Editor, text: []const u8) !void {
+        try self.buffer.appendSlice(self.allocator, text);
+        self.refreshSuggestions();
+    }
+
+    fn backspace(self: *Editor) void {
+        if (self.buffer.items.len == 0) return;
+        var idx = self.buffer.items.len - 1;
+        while (idx > 0 and (self.buffer.items[idx] & 0b1100_0000) == 0b1000_0000) : (idx -= 1) {}
+        self.buffer.items.len = idx;
+        self.refreshSuggestions();
+    }
+
+    fn setBuffer(self: *Editor, value: []const u8) !void {
+        self.buffer.clearRetainingCapacity();
+        try self.buffer.appendSlice(self.allocator, value);
+        self.refreshSuggestions();
+    }
+
+    fn refreshSuggestions(self: *Editor) void {
+        self.selected_index = 0;
+        if (self.buffer.items.len == 0 or self.buffer.items[0] != '/') {
+            self.suggestions_visible = false;
+            self.suggestion_count = 0;
+            return;
+        }
+        const prefix = self.buffer.items[1..];
+        self.suggestion_count = commands.matchesForPrefix(prefix, &self.suggestions);
+        self.suggestions_visible = self.suggestion_count > 0;
+    }
+
+    fn moveSelection(self: *Editor, delta: i32) void {
+        if (!self.suggestions_visible or self.suggestion_count == 0) return;
+        const count: i32 = @intCast(self.suggestion_count);
+        var next: i32 = @intCast(self.selected_index);
+        next = @mod(next + delta + count, count);
+        self.selected_index = @intCast(next);
+    }
+
+    fn completeSelection(self: *Editor) !void {
+        if (!self.suggestions_visible or self.suggestion_count == 0) return;
+        const spec = commands.allPrimarySpecs()[self.suggestions[self.selected_index]];
+        self.buffer.clearRetainingCapacity();
+        try self.buffer.append(self.allocator, '/');
+        try self.buffer.appendSlice(self.allocator, spec.literal);
+        if (spec.takes_arg) {
+            try self.buffer.append(self.allocator, ' ');
+        }
+        self.refreshSuggestions();
+    }
+};
+
+fn readInteractiveWindows(
+    allocator: std.mem.Allocator,
+    stdin: std.fs.File,
+    stdout: std.fs.File,
+    history: *history_mod.History,
+) !?[]u8 {
+    const guard = try ConsoleInputModeGuard.enable(stdin);
+    defer guard.disable();
+
+    var editor = Editor{ .allocator = allocator };
+    defer editor.deinit();
+
+    while (true) {
+        try renderEditor(stdout, &editor);
+        const key = try readKeyWindows(allocator, stdin);
+        defer switch (key) {
+            .char => |text| allocator.free(text),
+            else => {},
+        };
+
+        switch (key) {
+            .char => |text| try editor.appendText(text),
+            .backspace => editor.backspace(),
+            .tab => try editor.completeSelection(),
+            .escape => {
+                editor.suggestions_visible = false;
+                editor.suggestion_count = 0;
+                editor.selected_index = 0;
+            },
+            .up => if (editor.suggestions_visible)
+                editor.moveSelection(-1)
+            else if (history.up()) |entry|
+                try editor.setBuffer(entry),
+            .down => if (editor.suggestions_visible)
+                editor.moveSelection(1)
+            else if (history.down()) |entry|
+                try editor.setBuffer(entry)
+            else
+                try editor.setBuffer(""),
+            .enter => {
+                const line = try finalizeEditor(allocator, stdout, &editor);
+                if (line.len > 0) try history.add(line);
+                return line;
+            },
+            .unknown => {},
+        }
+    }
+}
+
+fn readInteractivePosix(
+    allocator: std.mem.Allocator,
+    stdin: std.fs.File,
+    stdout: std.fs.File,
+    history: *history_mod.History,
+) !?[]u8 {
+    const raw = try tui.RawMode.enable(stdin.handle);
+    defer raw.disable();
+
+    const reader = tui.InputReader{ .fd = stdin.handle };
+    var editor = Editor{ .allocator = allocator };
+    defer editor.deinit();
+
+    while (true) {
+        try renderEditor(stdout, &editor);
+        const key = try readKeyPosix(allocator, reader);
+        defer switch (key) {
+            .char => |text| allocator.free(text),
+            else => {},
+        };
+
+        switch (key) {
+            .char => |text| try editor.appendText(text),
+            .backspace => editor.backspace(),
+            .tab => try editor.completeSelection(),
+            .escape => {
+                editor.suggestions_visible = false;
+                editor.suggestion_count = 0;
+                editor.selected_index = 0;
+            },
+            .up => if (editor.suggestions_visible)
+                editor.moveSelection(-1)
+            else if (history.up()) |entry|
+                try editor.setBuffer(entry),
+            .down => if (editor.suggestions_visible)
+                editor.moveSelection(1)
+            else if (history.down()) |entry|
+                try editor.setBuffer(entry)
+            else
+                try editor.setBuffer(""),
+            .enter => {
+                const line = try finalizeEditor(allocator, stdout, &editor);
+                if (line.len > 0) try history.add(line);
+                return line;
+            },
+            .unknown => {},
+        }
+    }
+}
+
+fn finalizeEditor(allocator: std.mem.Allocator, stdout: std.fs.File, editor: *Editor) ![]u8 {
+    try clearRenderedLine(stdout);
+    const line = try editor.buffer.toOwnedSlice(allocator);
+    editor.buffer = .{};
+
+    var buf: [4096]u8 = undefined;
+    var writer = stdout.writer(&buf);
+    try tui.renderPrompt(&writer.interface);
+    try writer.interface.writeAll(line);
+    try writer.interface.writeAll("\n");
+    try writer.interface.flush();
+    return line;
+}
+
+fn renderEditor(stdout: std.fs.File, editor: *Editor) !void {
+    try clearRenderedLine(stdout);
+    var buf: [8192]u8 = undefined;
+    var writer = stdout.writer(&buf);
+    try tui.renderPrompt(&writer.interface);
+    try writer.interface.writeAll(editor.buffer.items);
+    if (editor.suggestions_visible and editor.suggestion_count > 0) {
+        try writer.interface.writeAll("  ");
+        const max_items = @min(editor.suggestion_count, 5);
+        for (editor.suggestions[0..max_items], 0..) |spec_index, idx| {
+            if (idx > 0) try writer.interface.writeAll("  ");
+            const spec = commands.allPrimarySpecs()[spec_index];
+            if (idx == editor.selected_index) {
+                try writer.interface.print("[/{s}]", .{spec.literal});
+            } else {
+                try writer.interface.print("/{s}", .{spec.literal});
+            }
+        }
+    }
+    try writer.interface.flush();
+}
+
+fn clearRenderedLine(stdout: std.fs.File) !void {
+    try stdout.writeAll("\r\x1b[2K");
+}
+
+fn readLineFallback(allocator: std.mem.Allocator, stdin: std.fs.File) !?[]u8 {
+    var out = std.ArrayList(u8){};
+    defer out.deinit(allocator);
+
+    var buf: [1]u8 = undefined;
+    while (true) {
+        const n = try stdin.read(&buf);
+        if (n == 0) {
+            if (out.items.len == 0) return null;
+            break;
+        }
+        if (buf[0] == '\n') break;
+        if (buf[0] != '\r') try out.append(allocator, buf[0]);
+    }
+    return try out.toOwnedSlice(allocator);
+}
+
+fn readKeyWindows(allocator: std.mem.Allocator, stdin: std.fs.File) !Key {
+    while (true) {
+        var record: InputRecord = undefined;
+        var events_read: windows.DWORD = 0;
+        if (ReadConsoleInputW(stdin.handle, @ptrCast(&record), 1, &events_read) == 0 or events_read == 0) {
+            return .unknown;
+        }
+        if (record.EventType != KEY_EVENT) continue;
+
+        const key_event = record.Event.KeyEvent;
+        if (key_event.bKeyDown == 0) continue;
+
+        switch (key_event.wVirtualKeyCode) {
+            VK_BACK => return .backspace,
+            VK_TAB => return .tab,
+            VK_RETURN => return .enter,
+            VK_ESCAPE => return .escape,
+            VK_UP => return .up,
+            VK_DOWN => return .down,
+            else => {},
+        }
+
+        if (key_event.uChar.UnicodeChar != 0) {
+            return .{ .char = try utf16CodeUnitsToUtf8Alloc(allocator, &.{key_event.uChar.UnicodeChar}) };
+        }
+    }
+}
+
+fn readKeyPosix(allocator: std.mem.Allocator, reader: tui.InputReader) !Key {
+    var buf: [8]u8 = undefined;
+    while (true) {
+        const bytes = try reader.read(&buf);
+        if (bytes.len == 0) continue;
+
+        const first = bytes[0];
+        return switch (first) {
+            9 => .tab,
+            10, 13 => .enter,
+            27 => blk: {
+                if (bytes.len >= 3 and bytes[1] == '[') {
+                    break :blk switch (bytes[2]) {
+                        'A' => .up,
+                        'B' => .down,
+                        else => .escape,
+                    };
+                }
+                break :blk .escape;
+            },
+            127, 8 => .backspace,
+            else => .{ .char = try allocator.dupe(u8, bytes[0..1]) },
+        };
+    }
+}
+
+fn utf16CodeUnitsToUtf8Alloc(allocator: std.mem.Allocator, code_units: []const u16) ![]u8 {
+    return std.unicode.utf16LeToUtf8Alloc(allocator, code_units);
+}
+
+const ConsoleInputModeGuard = struct {
+    handle: windows.HANDLE,
+    original_mode: windows.DWORD,
+    enabled: bool,
+
+    fn enable(stdin: std.fs.File) !ConsoleInputModeGuard {
+        var original_mode: windows.DWORD = 0;
+        if (kernel32.GetConsoleMode(stdin.handle, &original_mode) == 0) {
+            return .{ .handle = stdin.handle, .original_mode = 0, .enabled = false };
+        }
+
+        const new_mode = original_mode & ~(ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
+        if (kernel32.SetConsoleMode(stdin.handle, new_mode) == 0) {
+            return .{ .handle = stdin.handle, .original_mode = original_mode, .enabled = false };
+        }
+
+        return .{
+            .handle = stdin.handle,
+            .original_mode = original_mode,
+            .enabled = true,
+        };
+    }
+
+    fn disable(self: ConsoleInputModeGuard) void {
+        if (!self.enabled) return;
+        _ = kernel32.SetConsoleMode(self.handle, self.original_mode);
+    }
+};
+
+test "editor slash prefix opens suggestions" {
+    var editor = Editor{ .allocator = std.testing.allocator };
+    defer editor.deinit();
+
+    try editor.appendText("/");
+
+    try std.testing.expect(editor.suggestions_visible);
+    try std.testing.expect(editor.suggestion_count > 0);
+}
+
+test "editor tab completion appends trailing space for arg commands" {
+    var editor = Editor{ .allocator = std.testing.allocator };
+    defer editor.deinit();
+
+    try editor.appendText("/skills u");
+    try std.testing.expect(editor.suggestions_visible);
+    try editor.completeSelection();
+
+    try std.testing.expectEqualStrings("/skills use ", editor.buffer.items);
+}
+
+test "editor leaving slash mode hides suggestions" {
+    var editor = Editor{ .allocator = std.testing.allocator };
+    defer editor.deinit();
+
+    try editor.appendText("/");
+    try std.testing.expect(editor.suggestions_visible);
+    editor.backspace();
+    try std.testing.expect(!editor.suggestions_visible);
+}
