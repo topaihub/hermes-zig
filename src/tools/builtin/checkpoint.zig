@@ -51,12 +51,12 @@ pub const CheckpointTool = struct {
 
     fn runGit(allocator: std.mem.Allocator, argv: []const []const u8) ![]u8 {
         var child = std.process.Child.init(argv, allocator);
-        child.stdout_behavior = .pipe;
-        child.stderr_behavior = .pipe;
+        child.stdout_behavior = .Pipe;
+        child.stderr_behavior = .Pipe;
         try child.spawn();
-        const stdout = try child.stdout.?.reader().readAllAlloc(allocator, 1024 * 1024);
+        const stdout = try child.stdout.?.readToEndAlloc(allocator, 1024 * 1024);
         errdefer allocator.free(stdout);
-        const stderr = try child.stderr.?.reader().readAllAlloc(allocator, 1024 * 1024);
+        const stderr = try child.stderr.?.readToEndAlloc(allocator, 1024 * 1024);
         defer allocator.free(stderr);
         const term = try child.wait();
         if (term.Exited != 0) {

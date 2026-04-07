@@ -8,12 +8,10 @@ pub const PersistentShellBackend = struct {
     pub fn execute(self: *PersistentShellBackend, allocator: std.mem.Allocator, cmd: []const u8, cwd: []const u8, timeout_ms: u64) !ExecResult {
         _ = self;
         _ = timeout_ms;
-        var child = std.process.Child{
-            .argv = &.{ "/bin/sh", "-c", cmd },
-            .cwd = if (cwd.len > 0 and !std.mem.eql(u8, cwd, ".")) cwd else null,
-            .stdout_behavior = .Pipe,
-            .stderr_behavior = .Pipe,
-        };
+        var child = std.process.Child.init(&.{ "/bin/sh", "-c", cmd }, allocator);
+        child.cwd = if (cwd.len > 0 and !std.mem.eql(u8, cwd, ".")) cwd else null;
+        child.stdout_behavior = .Pipe;
+        child.stderr_behavior = .Pipe;
         try child.spawn();
         const stdout = try child.stdout.?.readToEndAlloc(allocator, 1024 * 1024);
         const stderr = try child.stderr.?.readToEndAlloc(allocator, 1024 * 1024);

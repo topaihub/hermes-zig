@@ -43,13 +43,13 @@ pub const ToolRegistry = struct {
     }
 
     pub fn collectSchemas(self: *ToolRegistry, allocator: std.mem.Allocator) ![]ToolSchema {
-        var list = std.ArrayList(ToolSchema).init(allocator);
-        for (self.static_tools) |h| try list.append(h.schema);
+        var list = std.ArrayList(ToolSchema){};
+        for (self.static_tools) |h| try list.append(allocator, h.schema);
         self.lock.lockShared();
         defer self.lock.unlockShared();
         var it = self.dynamic.valueIterator();
-        while (it.next()) |h| try list.append(h.schema);
-        return list.toOwnedSlice();
+        while (it.next()) |h| try list.append(allocator, h.schema);
+        return list.toOwnedSlice(allocator);
     }
 
     pub fn deinit(self: *ToolRegistry) void {

@@ -22,17 +22,17 @@ pub const FileEditTool = struct {
         defer allocator.free(content);
 
         var count: usize = 0;
-        var result = std.ArrayList(u8).init(allocator);
-        defer result.deinit();
+        var result = std.ArrayList(u8){};
+        defer result.deinit(allocator);
 
         var rest: []const u8 = content;
         while (std.mem.indexOf(u8, rest, old_text)) |idx| {
-            result.appendSlice(rest[0..idx]) catch return error.OutOfMemory;
-            result.appendSlice(new_text) catch return error.OutOfMemory;
+            result.appendSlice(allocator, rest[0..idx]) catch return error.OutOfMemory;
+            result.appendSlice(allocator, new_text) catch return error.OutOfMemory;
             rest = rest[idx + old_text.len ..];
             count += 1;
         }
-        result.appendSlice(rest) catch return error.OutOfMemory;
+        result.appendSlice(allocator, rest) catch return error.OutOfMemory;
 
         if (count == 0) return .{ .output = try std.fmt.allocPrint(allocator, "No occurrences of old_text found in {s}", .{path}) };
 

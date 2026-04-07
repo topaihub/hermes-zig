@@ -116,8 +116,8 @@ The setup wizard creates `config.json`:
 | `/setup` | Re-run setup wizard |
 | `/model` | Open the interactive model selector when supported, or show current/available models |
 | `/config` | Show current configuration |
-| `/tools` | List available tools |
-| `/skills` | List installed skills |
+| `/tools` | Open interactive tool toggler or show effective tool state |
+| `/skills` | Open interactive skill menu or show installed skill state |
 | `/skills view <name>` | View a skill |
 | `/skills use <name>` | Activate one skill for the current session |
 | `/skills clear` | Clear the active skill |
@@ -152,6 +152,47 @@ You can still switch directly by name:
 ```
 
 If interactive input is unavailable, `/model` falls back to printing the current model and configured choices.
+
+### Interactive Tool Switching
+
+`/tools` now reflects the real effective tool state for the current config.
+
+When interactive input is available:
+
+- `/tools` opens a tool toggler
+- Use `Up` / `Down` to move between tools
+- Press `Enter` to enable or disable the selected tool
+- Press `Esc` to exit the tool menu
+
+When interactive input is unavailable, or when you want an explicit textual flow:
+
+```text
+/tools list
+/tools disable todo
+/tools enable todo
+```
+
+Changes are written back to `config.json` and the current process refreshes its runtime tool registry immediately.
+
+### Interactive Skills Menu
+
+`/skills` now acts as the primary session-skill entrypoint.
+
+When interactive input is available and installed skills exist:
+
+- `/skills` opens a skill menu
+- Use `Up` / `Down` to move between installed skills
+- Press `Enter` to activate the selected skill for the current session
+- When a skill is already active, the menu also includes a clear action
+- Press `Esc` to exit without further changes
+
+When interactive input is unavailable, `/skills` falls back to textual state output and keeps these direct commands available:
+
+```text
+/skills view poetry-helper
+/skills use poetry-helper
+/skills clear
+```
 
 ### Chat
 

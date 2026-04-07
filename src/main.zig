@@ -327,8 +327,8 @@ pub fn main() !void {
     var resolved_provider = try llm.runtime_provider.resolveProvider(allocator, &cfg, native_http.client());
     defer if (resolved_provider) |provider| provider.deinit(allocator);
 
-    var tool_reg = tools.registry.ToolRegistry.init(allocator, &.{});
-    defer tool_reg.deinit();
+    var tools_runtime = try interface.cli.ToolsRuntime.init(allocator, &cfg);
+    defer tools_runtime.deinit();
 
     var skills_runtime = try interface.cli.SkillsRuntime.init(allocator);
     defer skills_runtime.deinit();
@@ -361,7 +361,7 @@ pub fn main() !void {
     try stdout.writeAll("  \x1b[90m/setup\x1b[0m  — Configure provider and API key\n");
     try stdout.writeAll("  \x1b[90m/model\x1b[0m  — Switch model\n");
     try stdout.writeAll("  \x1b[90m/config\x1b[0m — Show current config\n");
-    try stdout.writeAll("  \x1b[90m/skills\x1b[0m — List or activate installed skills\n");
+    try stdout.writeAll("  \x1b[90m/skills\x1b[0m — Browse or activate installed skills\n");
     if (interface.cli.canUseInteractiveInput(stdin, stdout)) {
         try stdout.writeAll("  Type \x1b[90m/\x1b[0m for command suggestions, \x1b[90mTab\x1b[0m to complete\n");
     }
@@ -399,6 +399,7 @@ pub fn main() !void {
                 &cfg,
                 &owned_model_override,
                 &skills_runtime,
+                &tools_runtime,
                 &session_usage,
             ) catch |err| {
                 framework.observability.request_trace.complete(app_ctx.logger, &request_trace, 500, @errorName(err));
@@ -442,15 +443,17 @@ pub fn main() !void {
         defer freeRequestMessages(allocator, request_messages);
 
         const llm_client = resolved_provider.?.asLlmClient();
+        const tool_schemas = try collectLlmToolSchemas(allocator, &tools_runtime);
+        defer allocator.free(tool_schemas);
         var agent_loop = agent.AgentLoop{
             .allocator = allocator,
             .llm = llm_client,
-            .tools = &tool_reg,
+            .tools = &tools_runtime.registry,
             .config = &cfg,
             .logger = app_ctx.logger,
         };
 
-        var result = agent_loop.run(request_messages, &.{}) catch |err| {
+        var result = agent_loop.run(request_messages, tool_schemas) catch |err| {
             const err_name = @errorName(err);
             framework.observability.request_trace.complete(app_ctx.logger, &request_trace, 500, err_name);
             const msg = try renderChatErrorMessage(allocator, err_name);
@@ -487,6 +490,7 @@ fn handleCommand(
     cfg: *core.Config,
     owned_model_override: *?[]u8,
     skills_runtime: *interface.cli.SkillsRuntime,
+    tools_runtime: *interface.cli.ToolsRuntime,
     session_usage: *core.TokenUsage,
 ) !CommandAction {
     const parsed = interface.cli.parseCommand(input) orelse return .continue_session;
@@ -542,11 +546,11 @@ fn handleCommand(
             return .continue_session;
         },
         .skills => {
-            try renderSkillsList(allocator, stdout, skills_runtime);
+            try interface.cli.skills_config.handleSkillsCommand(allocator, stdin, stdout, skills_runtime);
             return .continue_session;
         },
         .skills_config => {
-            try writeF(stdout, allocator, "\n  \x1b[1mSkills Directory:\x1b[0m\n    {s}\n\n", .{skills_runtime.skills_dir});
+            try interface.cli.skills_config.renderSkillsDirectory(allocator, stdout, skills_runtime);
             return .continue_session;
         },
         .skills_view => {
@@ -554,7 +558,7 @@ fn handleCommand(
                 try stdout.writeAll("\n  Usage: /skills view <name>\n\n");
                 return .continue_session;
             };
-            try renderSkillView(allocator, stdout, skills_runtime, name);
+            try interface.cli.skills_config.renderSkillView(allocator, stdout, skills_runtime, name);
             return .continue_session;
         },
         .skills_use => {
@@ -562,12 +566,11 @@ fn handleCommand(
                 try stdout.writeAll("\n  Usage: /skills use <name>\n\n");
                 return .continue_session;
             };
-            try activateSkill(allocator, stdout, skills_runtime, name);
+            try interface.cli.skills_config.activateSkill(allocator, stdout, skills_runtime, name);
             return .continue_session;
         },
         .skills_clear => {
-            skills_runtime.clearActive();
-            try stdout.writeAll("\n  Cleared active skill for this session.\n\n");
+            try interface.cli.skills_config.clearActiveSkill(allocator, stdout, skills_runtime);
             return .continue_session;
         },
         .usage => {
@@ -585,18 +588,7 @@ fn handleCommand(
             return .continue_session;
         },
         .tools => {
-            try stdout.writeAll("\n  \x1b[1mAvailable Tools:\x1b[0m\n");
-            const tool_names = [_][]const u8{
-                "terminal",       "read_file",     "write_file",    "patch",           "search_files",
-                "web_search",     "web_extract",   "execute_code",  "todo",            "memory",
-                "clarify",        "delegate_task", "send_message",  "image_generate",
-                "text_to_speech", "vision_analyze", "cronjob",      "session_search",
-                "skills_list",    "skill_view",    "skill_manage",  "checkpoint",      "process",
-            };
-            for (tool_names) |name| {
-                try writeF(stdout, allocator, "    • {s}\n", .{name});
-            }
-            try stdout.writeAll("\n");
+            try @import("interface/cli/tools_config.zig").handleToolsCommand(allocator, parsed.arg orelse "", stdin, stdout, cfg, config_path, tools_runtime);
             return .continue_session;
         },
         .new_session => {
@@ -643,65 +635,27 @@ fn buildRequestMessages(
     return messages;
 }
 
+fn collectLlmToolSchemas(
+    allocator: std.mem.Allocator,
+    tools_runtime: *interface.cli.ToolsRuntime,
+) ![]llm.ToolSchema {
+    const runtime_schemas = try tools_runtime.collectSchemas(allocator);
+    defer allocator.free(runtime_schemas);
+
+    const schemas = try allocator.alloc(llm.ToolSchema, runtime_schemas.len);
+    for (runtime_schemas, 0..) |schema, index| {
+        schemas[index] = .{
+            .name = schema.name,
+            .description = schema.description,
+            .parameters_schema = schema.parameters_schema,
+        };
+    }
+    return schemas;
+}
+
 fn freeRequestMessages(allocator: std.mem.Allocator, messages: []core.Message) void {
     if (messages.len > 0) allocator.free(messages[0].content);
     allocator.free(messages);
-}
-
-fn renderSkillsList(allocator: std.mem.Allocator, stdout: std.fs.File, skills_runtime: *interface.cli.SkillsRuntime) !void {
-    try skills_runtime.reload();
-    try stdout.writeAll("\n  \x1b[1mSkills:\x1b[0m\n");
-    if (!skills_runtime.hasInstalledSkills()) {
-        try writeF(stdout, allocator, "    No skills found in {s}\n\n", .{skills_runtime.skills_dir});
-        return;
-    }
-
-    for (skills_runtime.installed) |skill| {
-        const active_marker = if (skills_runtime.activeName()) |active_name|
-            if (std.mem.eql(u8, active_name, skill.name)) " (active)" else ""
-        else
-            "";
-        try writeF(stdout, allocator, "    • {s}{s}\n", .{ skill.name, active_marker });
-        if (skill.description.len > 0) {
-            try writeF(stdout, allocator, "      {s}\n", .{skill.description});
-        }
-    }
-    try stdout.writeAll("\n");
-}
-
-fn renderSkillView(
-    allocator: std.mem.Allocator,
-    stdout: std.fs.File,
-    skills_runtime: *interface.cli.SkillsRuntime,
-    name: []const u8,
-) !void {
-    try skills_runtime.reload();
-    const skill = skills_runtime.findInstalled(name) orelse {
-        try writeF(stdout, allocator, "\n  Skill not found: {s}\n\n", .{name});
-        return;
-    };
-
-    try writeF(stdout, allocator, "\n  \x1b[1mSkill:\x1b[0m {s}\n", .{skill.name});
-    if (skill.description.len > 0) {
-        try writeF(stdout, allocator, "  \x1b[1mDescription:\x1b[0m {s}\n", .{skill.description});
-    }
-    try stdout.writeAll("\n");
-    try stdout.writeAll(skill.body);
-    try stdout.writeAll("\n\n");
-}
-
-fn activateSkill(
-    allocator: std.mem.Allocator,
-    stdout: std.fs.File,
-    skills_runtime: *interface.cli.SkillsRuntime,
-    name: []const u8,
-) !void {
-    try skills_runtime.reload();
-    if (!(try skills_runtime.activate(name))) {
-        try writeF(stdout, allocator, "\n  Skill not found: {s}\n\n", .{name});
-        return;
-    }
-    try writeF(stdout, allocator, "\n  Activated skill: {s}\n\n", .{skills_runtime.active.?.name});
 }
 
 fn runSetupWizard(allocator: std.mem.Allocator, stdout: std.fs.File, stdin: std.fs.File, config_path: []const u8) !void {

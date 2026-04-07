@@ -33,27 +33,23 @@ pub const ImageGenTool = struct {
         var client: std.http.Client = .{ .allocator = allocator };
         defer client.deinit();
 
-        var buf: [4096]u8 = undefined;
-        const uri = std.Uri.parse("https://api.openai.com/v1/images/generations") catch
-            return .{ .output = "invalid URI", .is_error = true };
-        var req = client.open(.POST, uri, .{
-            .server_header_buffer = &buf,
+        var response_writer: std.Io.Writer.Allocating = .init(allocator);
+        defer response_writer.deinit();
+        const auth_header = try std.fmt.allocPrint(allocator, "Bearer {s}", .{api_key});
+        defer allocator.free(auth_header);
+
+        _ = client.fetch(.{
+            .location = .{ .url = "https://api.openai.com/v1/images/generations" },
+            .method = .POST,
+            .payload = body,
             .extra_headers = &.{
-                .{ .name = "Authorization", .value = try std.fmt.allocPrint(allocator, "Bearer {s}", .{api_key}) },
+                .{ .name = "Authorization", .value = auth_header },
                 .{ .name = "Content-Type", .value = "application/json" },
             },
-        }) catch return .{ .output = "HTTP connection failed to api.openai.com", .is_error = true };
-        defer req.deinit();
+            .response_writer = &response_writer.writer,
+        }) catch return .{ .output = "HTTP request failed", .is_error = true };
 
-        req.transfer_encoding = .{ .content_length = body.len };
-        req.send() catch return .{ .output = "HTTP send failed", .is_error = true };
-        req.writeAll(body) catch return .{ .output = "HTTP write failed", .is_error = true };
-        req.finish() catch return .{ .output = "HTTP finish failed", .is_error = true };
-        req.wait() catch return .{ .output = "HTTP wait failed", .is_error = true };
-
-        const resp = req.reader().readAllAlloc(allocator, 1 << 20) catch
-            return .{ .output = "Failed to read response", .is_error = true };
-        return .{ .output = resp };
+        return .{ .output = try response_writer.toOwnedSlice() };
     }
 };
 

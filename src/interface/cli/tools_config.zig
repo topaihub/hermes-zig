@@ -1,34 +1,258 @@
 const std = @import("std");
+const core = @import("../../core/root.zig");
+const cli = @import("root.zig");
+const tools_runtime_mod = @import("tools_runtime.zig");
+
 const Allocator = std.mem.Allocator;
+const ToolsRuntime = tools_runtime_mod.ToolsRuntime;
+const ToolState = tools_runtime_mod.ToolState;
 
-const builtin_tools = [_][]const u8{
-    "terminal", "read_file", "write_file", "patch", "search_files",
-    "web_search", "web_extract", "execute_code", "todo", "memory",
-};
+pub fn handleToolsCommand(
+    allocator: Allocator,
+    args: []const u8,
+    stdin: std.fs.File,
+    stdout: std.fs.File,
+    cfg: *core.Config,
+    config_path: []const u8,
+    tools_runtime: *ToolsRuntime,
+) !void {
+    const trimmed = std.mem.trim(u8, args, " \t");
 
-pub fn handleToolsCommand(allocator: Allocator, args: []const u8, stdout: std.fs.File) !void {
-    if (args.len == 0 or std.mem.eql(u8, args, "list")) {
-        try stdout.writeAll("  Tools:\n");
-        for (builtin_tools) |name| {
-            const msg = try std.fmt.allocPrint(allocator, "    • {s}  [enabled]\n", .{name});
-            defer allocator.free(msg);
-            try stdout.writeAll(msg);
+    if (trimmed.len == 0) {
+        if (cli.canUseInteractiveInput(stdin, stdout)) {
+            try runInteractiveToolsMenu(allocator, stdin, stdout, cfg, config_path, tools_runtime);
+            return;
         }
-    } else if (std.mem.startsWith(u8, args, "enable ")) {
-        const name = std.mem.trim(u8, args[7..], " ");
-        const msg = try std.fmt.allocPrint(allocator, "  Enabled tool: {s}\n", .{name});
-        defer allocator.free(msg);
-        try stdout.writeAll(msg);
-    } else if (std.mem.startsWith(u8, args, "disable ")) {
-        const name = std.mem.trim(u8, args[8..], " ");
-        const msg = try std.fmt.allocPrint(allocator, "  Disabled tool: {s}\n", .{name});
-        defer allocator.free(msg);
-        try stdout.writeAll(msg);
-    } else {
-        try stdout.writeAll("  Tools subcommands: list, enable <name>, disable <name>\n");
+        try renderToolsState(allocator, stdout, cfg, tools_runtime);
+        return;
+    }
+
+    if (std.mem.eql(u8, trimmed, "list")) {
+        try renderToolsState(allocator, stdout, cfg, tools_runtime);
+        return;
+    }
+
+    if (std.mem.startsWith(u8, trimmed, "enable ")) {
+        const name = std.mem.trim(u8, trimmed["enable ".len..], " \t");
+        try setToolStateAndReport(allocator, stdout, cfg, config_path, tools_runtime, name, true);
+        return;
+    }
+
+    if (std.mem.startsWith(u8, trimmed, "disable ")) {
+        const name = std.mem.trim(u8, trimmed["disable ".len..], " \t");
+        try setToolStateAndReport(allocator, stdout, cfg, config_path, tools_runtime, name, false);
+        return;
+    }
+
+    try stdout.writeAll("\n  Usage:\n");
+    try stdout.writeAll("    /tools           Open interactive tool toggler or show tool state\n");
+    try stdout.writeAll("    /tools list      Show effective enabled and disabled tools\n");
+    try stdout.writeAll("    /tools enable <name>\n");
+    try stdout.writeAll("    /tools disable <name>\n\n");
+}
+
+fn renderToolsState(
+    allocator: Allocator,
+    stdout: std.fs.File,
+    cfg: *const core.Config,
+    tools_runtime: *ToolsRuntime,
+) !void {
+    const states = try tools_runtime.listStates(allocator, cfg);
+    defer allocator.free(states);
+
+    try stdout.writeAll("\n  \x1b[1mTools:\x1b[0m\n");
+    for (states) |state| {
+        const status = if (state.enabled) "\x1b[32menabled\x1b[0m" else "\x1b[90mdisabled\x1b[0m";
+        const line = try std.fmt.allocPrint(allocator, "    • {s:<16} [{s}]\n", .{ state.name, status });
+        defer allocator.free(line);
+        try stdout.writeAll(line);
+    }
+    try stdout.writeAll("\n");
+}
+
+fn runInteractiveToolsMenu(
+    allocator: Allocator,
+    stdin: std.fs.File,
+    stdout: std.fs.File,
+    cfg: *core.Config,
+    config_path: []const u8,
+    tools_runtime: *ToolsRuntime,
+) !void {
+    var selected_index: usize = 0;
+    var changed = false;
+    var last_status: ?[]u8 = null;
+    defer if (last_status) |msg| allocator.free(msg);
+
+    while (true) {
+        const states = try tools_runtime.listStates(allocator, cfg);
+        defer allocator.free(states);
+        const items = try buildMenuItems(allocator, states);
+        defer freeOwnedStrings(allocator, items);
+
+        const title = if (last_status) |msg|
+            try std.fmt.allocPrint(allocator, "Toggle tools (Enter=toggle, Esc=done)  [{s}]", .{msg})
+        else
+            try allocator.dupe(u8, "Toggle tools (Enter=toggle, Esc=done)");
+        defer allocator.free(title);
+
+        const maybe_index = try cli.runSelectionMenu(allocator, stdin, stdout, title, items, selected_index);
+        if (maybe_index == null) break;
+
+        selected_index = maybe_index.?;
+        const state = states[selected_index];
+        const target_enabled = !state.enabled;
+
+        if (last_status) |msg| {
+            allocator.free(msg);
+            last_status = null;
+        }
+
+        const label = try mutateToolState(allocator, cfg, config_path, tools_runtime, state.name, target_enabled);
+        if (label.len == 0) {
+            last_status = try std.fmt.allocPrint(
+                allocator,
+                "{s} already {s}",
+                .{ state.name, if (target_enabled) "enabled" else "disabled" },
+            );
+        } else {
+            last_status = label;
+            changed = true;
+        }
+    }
+
+    if (changed) {
+        try stdout.writeAll("\n  Tool configuration updated.\n\n");
     }
 }
 
-test "builtin_tools not empty" {
-    try std.testing.expect(builtin_tools.len > 0);
+fn setToolStateAndReport(
+    allocator: Allocator,
+    stdout: std.fs.File,
+    cfg: *core.Config,
+    config_path: []const u8,
+    tools_runtime: *ToolsRuntime,
+    name: []const u8,
+    enabled: bool,
+) !void {
+    const label = try mutateToolState(allocator, cfg, config_path, tools_runtime, name, enabled);
+    defer allocator.free(label);
+
+    if (label.len == 0) {
+        const unchanged = try std.fmt.allocPrint(
+            allocator,
+            "\n  Tool {s} is already {s}.\n\n",
+            .{ name, if (enabled) "enabled" else "disabled" },
+        );
+        defer allocator.free(unchanged);
+        try stdout.writeAll(unchanged);
+        return;
+    }
+
+    const msg = try std.fmt.allocPrint(allocator, "\n  {s}.\n\n", .{label});
+    defer allocator.free(msg);
+    try stdout.writeAll(msg);
+}
+
+fn mutateToolState(
+    allocator: Allocator,
+    cfg: *core.Config,
+    config_path: []const u8,
+    tools_runtime: *ToolsRuntime,
+    name: []const u8,
+    enabled: bool,
+) ![]u8 {
+    const changed = tools_runtime.setToolEnabled(cfg, name, enabled) catch |err| switch (err) {
+        error.UnknownTool => return std.fmt.allocPrint(allocator, "Unknown tool: {s}", .{name}),
+        error.ToolBlockedByToolsets => return std.fmt.allocPrint(
+            allocator,
+            "Cannot enable {s} because the current enabled_toolsets do not include it",
+            .{name},
+        ),
+        else => return err,
+    };
+
+    if (!changed) return allocator.alloc(u8, 0);
+
+    try saveConfigAlloc(allocator, config_path, cfg.*);
+    try tools_runtime.reload(cfg);
+    return std.fmt.allocPrint(allocator, "{s} {s}", .{
+        if (enabled) "Enabled" else "Disabled",
+        name,
+    });
+}
+
+fn buildMenuItems(allocator: Allocator, states: []const ToolState) ![][]u8 {
+    const items = try allocator.alloc([]u8, states.len);
+    var built: usize = 0;
+    errdefer {
+        for (items[0..built]) |item| allocator.free(item);
+        allocator.free(items);
+    }
+
+    for (states, 0..) |state, index| {
+        items[index] = try std.fmt.allocPrint(
+            allocator,
+            "[{s}] {s}",
+            .{ if (state.enabled) "enabled " else "disabled", state.name },
+        );
+        built += 1;
+    }
+    return items;
+}
+
+fn freeOwnedStrings(allocator: Allocator, items: [][]u8) void {
+    for (items) |item| allocator.free(item);
+    allocator.free(items);
+}
+
+fn createConfigFile(config_path: []const u8) !std.fs.File {
+    if (std.fs.path.isAbsolute(config_path)) {
+        return std.fs.createFileAbsolute(config_path, .{});
+    }
+    return std.fs.cwd().createFile(config_path, .{});
+}
+
+fn saveConfigAlloc(allocator: Allocator, config_path: []const u8, cfg: core.Config) !void {
+    const json = try std.json.Stringify.valueAlloc(allocator, cfg, .{ .whitespace = .indent_2 });
+    defer allocator.free(json);
+    var file = try createConfigFile(config_path);
+    defer file.close();
+    try file.writeAll(json);
+}
+
+test "mutateToolState rejects unknown tool names without mutating config" {
+    var cfg = core.Config{};
+    var runtime = try ToolsRuntime.init(std.testing.allocator, &cfg);
+    defer runtime.deinit();
+
+    const label = try mutateToolState(std.testing.allocator, &cfg, "tools-test-config.json", &runtime, "missing", false);
+    defer std.testing.allocator.free(label);
+    try std.testing.expectEqualStrings("Unknown tool: missing", label);
+    try std.testing.expectEqual(@as(usize, 0), cfg.tools.disabled_tools.len);
+}
+
+test "mutateToolState disables tool, persists config, and refreshes runtime" {
+    const config_path = "_hermes_tools_config_test.json";
+    defer std.fs.cwd().deleteFile(config_path) catch {};
+
+    var cfg = core.Config{};
+    var runtime = try ToolsRuntime.init(std.testing.allocator, &cfg);
+    defer runtime.deinit();
+
+    const label = try mutateToolState(std.testing.allocator, &cfg, config_path, &runtime, "todo", false);
+    defer std.testing.allocator.free(label);
+    try std.testing.expectEqualStrings("Disabled todo", label);
+    try std.testing.expectEqual(@as(usize, 1), cfg.tools.disabled_tools.len);
+    try std.testing.expectEqualStrings("todo", cfg.tools.disabled_tools[0]);
+
+    const states = try runtime.listStates(std.testing.allocator, &cfg);
+    defer std.testing.allocator.free(states);
+    var found_todo = false;
+    for (states) |state| {
+        if (std.mem.eql(u8, state.name, "todo")) {
+            found_todo = true;
+            try std.testing.expect(!state.enabled);
+        }
+    }
+    try std.testing.expect(found_todo);
 }

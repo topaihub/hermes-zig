@@ -20,7 +20,7 @@ pub const WebSearchTool = struct {
     }
 
     fn duckduckgo(allocator: std.mem.Allocator, query: []const u8) !ToolResult {
-        const encoded = try std.Uri.Component.percent_encode(allocator, query, .{});
+        const encoded = try percentEncodeQuery(allocator, query);
         defer allocator.free(encoded);
         const url = try std.fmt.allocPrint(allocator, "https://api.duckduckgo.com/?q={s}&format=json&no_html=1", .{encoded});
         defer allocator.free(url);
@@ -28,24 +28,25 @@ pub const WebSearchTool = struct {
         var client: std.http.Client = .{ .allocator = allocator };
         defer client.deinit();
 
-        var buf = std.ArrayList(u8).init(allocator);
-        defer buf.deinit();
+        var response_writer: std.Io.Writer.Allocating = .init(allocator);
+        defer response_writer.deinit();
 
         const result = try client.fetch(.{
             .location = .{ .url = url },
-            .response_storage = .{ .dynamic = &buf },
+            .response_writer = &response_writer.writer,
         });
 
         if (@intFromEnum(result.status) >= 400) return error.HttpError;
 
-        const body = buf.items;
+        const body = response_writer.written();
         const parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{ .ignore_unknown_fields = true }) catch
             return .{ .output = try std.fmt.allocPrint(allocator, "[web_search] Could not parse response for: {s}", .{query}) };
         defer parsed.deinit();
         const root = parsed.value.object;
 
-        var out = std.ArrayList(u8).init(allocator);
-        const w = out.writer();
+        var out = std.ArrayList(u8){};
+        defer out.deinit(allocator);
+        const w = out.writer(allocator);
 
         // AbstractText
         if (root.get("AbstractText")) |v| {
@@ -76,9 +77,26 @@ pub const WebSearchTool = struct {
         if (out.items.len == 0) {
             return .{ .output = try std.fmt.allocPrint(allocator, "[web_search] No results for: {s}", .{query}) };
         }
-        return .{ .output = try out.toOwnedSlice() };
+        return .{ .output = try out.toOwnedSlice(allocator) };
     }
 };
+
+fn percentEncodeQuery(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
+    var out = std.ArrayList(u8){};
+    defer out.deinit(allocator);
+
+    for (input) |char| {
+        if (std.ascii.isAlphanumeric(char) or char == '-' or char == '_' or char == '.' or char == '~') {
+            try out.append(allocator, char);
+        } else if (char == ' ') {
+            try out.appendSlice(allocator, "%20");
+        } else {
+            try out.writer(allocator).print("%{X:0>2}", .{char});
+        }
+    }
+
+    return out.toOwnedSlice(allocator);
+}
 
 pub const WebExtractTool = struct {
     pub const SCHEMA = tools_interface.ToolSchema{

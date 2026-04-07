@@ -8,11 +8,9 @@ pub const DockerBackend = struct {
 
     pub fn execute(self: *DockerBackend, allocator: std.mem.Allocator, cmd: []const u8, _: []const u8, _: u64) !ExecResult {
         const target = if (self.container.len > 0) self.container else self.image;
-        var child = std.process.Child{
-            .argv = &.{ "docker", "exec", target, "sh", "-c", cmd },
-            .stdout_behavior = .Pipe,
-            .stderr_behavior = .Pipe,
-        };
+        var child = std.process.Child.init(&.{ "docker", "exec", target, "sh", "-c", cmd }, allocator);
+        child.stdout_behavior = .Pipe;
+        child.stderr_behavior = .Pipe;
         try child.spawn();
         const stdout = try child.stdout.?.readToEndAlloc(allocator, 1024 * 1024);
         const stderr = try child.stderr.?.readToEndAlloc(allocator, 1024 * 1024);

@@ -30,16 +30,17 @@ pub const SkillsList = struct {
             return .{ .output = try std.fmt.allocPrint(allocator, "No skills directory found at {s}", .{dir_path}) };
 
         defer dir.close();
-        var result = std.ArrayList(u8).init(allocator);
+        var result = std.ArrayList(u8){};
+        defer result.deinit(allocator);
         var iter = dir.iterate();
         while (try iter.next()) |entry| {
             if (entry.kind == .directory) {
-                try result.appendSlice(entry.name);
-                try result.append('\n');
+                try result.appendSlice(allocator, entry.name);
+                try result.append(allocator, '\n');
             }
         }
         if (result.items.len == 0) return .{ .output = try std.fmt.allocPrint(allocator, "No skills found in {s}", .{dir_path}) };
-        return .{ .output = try result.toOwnedSlice() };
+        return .{ .output = try result.toOwnedSlice(allocator) };
     }
 };
 

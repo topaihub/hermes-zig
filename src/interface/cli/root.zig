@@ -17,6 +17,7 @@ pub const gateway_cmd = @import("gateway_cmd.zig");
 pub const env_loader = @import("env_loader.zig");
 pub const auth_cmd = @import("auth_cmd.zig");
 pub const tools_config = @import("tools_config.zig");
+pub const skills_config = @import("skills_config.zig");
 pub const mcp_config = @import("mcp_config.zig");
 pub const cron_cmd = @import("cron_cmd.zig");
 pub const skills_hub_cmd = @import("skills_hub_cmd.zig");
@@ -31,6 +32,7 @@ pub const curses_ui = @import("curses_ui.zig");
 pub const pairing = @import("pairing.zig");
 pub const skills_runtime = @import("skills_runtime.zig");
 pub const input_controller = @import("input_controller.zig");
+pub const tools_runtime = @import("tools_runtime.zig");
 
 // Re-export key types
 pub const RawMode = tui.RawMode;
@@ -61,6 +63,7 @@ pub const GatewayCmd = gateway_cmd.GatewayCmd;
 pub const loadDotEnv = env_loader.loadDotEnv;
 pub const handleAuthCommand = auth_cmd.handleAuthCommand;
 pub const handleToolsCommand = tools_config.handleToolsCommand;
+pub const handleSkillsCommand = skills_config.handleSkillsCommand;
 pub const handleMcpCommand = mcp_config.handleMcpCommand;
 pub const handleCronCommand = cron_cmd.handleCronCommand;
 pub const handleSkillsHubCommand = skills_hub_cmd.handleSkillsHubCommand;
@@ -69,6 +72,7 @@ pub const MainCommand = main_entry.Command;
 pub const parseSubcommand = main_entry.parseSubcommand;
 pub const handleUninstall = uninstall.handleUninstall;
 pub const SkillsRuntime = skills_runtime.SkillsRuntime;
+pub const ToolsRuntime = tools_runtime.ToolsRuntime;
 
 comptime {
     @import("std").testing.refAllDecls(@This());
@@ -78,5 +82,6 @@ test {
     _ = @import("commands.zig");
     _ = @import("history.zig");
     _ = @import("skills_runtime.zig");
+    _ = @import("skills_config.zig");
     _ = @import("input_controller.zig");
 }

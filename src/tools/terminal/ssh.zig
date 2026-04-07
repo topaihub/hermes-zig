@@ -12,11 +12,9 @@ pub const SshBackend = struct {
         defer allocator.free(port_str);
         const target = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ self.user, self.host });
         defer allocator.free(target);
-        var child = std.process.Child{
-            .argv = &.{ "ssh", target, "-p", port_str, "sh", "-c", cmd },
-            .stdout_behavior = .Pipe,
-            .stderr_behavior = .Pipe,
-        };
+        var child = std.process.Child.init(&.{ "ssh", target, "-p", port_str, "sh", "-c", cmd }, allocator);
+        child.stdout_behavior = .Pipe;
+        child.stderr_behavior = .Pipe;
         try child.spawn();
         const stdout = try child.stdout.?.readToEndAlloc(allocator, 1024 * 1024);
         const stderr = try child.stderr.?.readToEndAlloc(allocator, 1024 * 1024);
