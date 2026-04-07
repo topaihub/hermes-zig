@@ -93,6 +93,50 @@ const Key = union(enum) {
 
 const max_visible_menu_items: usize = 5;
 
+const Selector = struct {
+    item_count: usize,
+    selected_index: usize,
+    viewport_start: usize = 0,
+
+    fn init(item_count: usize, selected_index: usize) Selector {
+        var selector = Selector{
+            .item_count = item_count,
+            .selected_index = if (item_count == 0) 0 else @min(selected_index, item_count - 1),
+        };
+        selector.ensureSelectionVisible();
+        return selector;
+    }
+
+    fn moveSelection(self: *Selector, delta: i32) void {
+        if (self.item_count == 0) return;
+        const count: i32 = @intCast(self.item_count);
+        var next: i32 = @intCast(self.selected_index);
+        next = @mod(next + delta + count, count);
+        self.selected_index = @intCast(next);
+        self.ensureSelectionVisible();
+    }
+
+    fn ensureSelectionVisible(self: *Selector) void {
+        if (self.item_count == 0) {
+            self.viewport_start = 0;
+            return;
+        }
+        if (self.selected_index < self.viewport_start) {
+            self.viewport_start = self.selected_index;
+            return;
+        }
+        const viewport_end = self.viewport_start + max_visible_menu_items;
+        if (self.selected_index >= viewport_end) {
+            self.viewport_start = self.selected_index + 1 - max_visible_menu_items;
+        }
+    }
+
+    fn visibleCount(self: *const Selector) usize {
+        if (self.item_count == 0) return 0;
+        return @min(self.item_count - self.viewport_start, max_visible_menu_items);
+    }
+};
+
 const Editor = struct {
     allocator: std.mem.Allocator,
     buffer: std.ArrayList(u8) = .{},
@@ -141,11 +185,14 @@ const Editor = struct {
 
     fn moveSelection(self: *Editor, delta: i32) void {
         if (!self.suggestions_visible or self.suggestion_count == 0) return;
-        const count: i32 = @intCast(self.suggestion_count);
-        var next: i32 = @intCast(self.selected_index);
-        next = @mod(next + delta + count, count);
-        self.selected_index = @intCast(next);
-        self.ensureSelectionVisible();
+        var selector = Selector{
+            .item_count = self.suggestion_count,
+            .selected_index = self.selected_index,
+            .viewport_start = self.viewport_start,
+        };
+        selector.moveSelection(delta);
+        self.selected_index = selector.selected_index;
+        self.viewport_start = selector.viewport_start;
     }
 
     fn completeSelection(self: *Editor) !void {
@@ -160,22 +207,32 @@ const Editor = struct {
         self.refreshSuggestions();
     }
 
-    fn ensureSelectionVisible(self: *Editor) void {
-        if (self.selected_index < self.viewport_start) {
-            self.viewport_start = self.selected_index;
-            return;
-        }
-        const viewport_end = self.viewport_start + max_visible_menu_items;
-        if (self.selected_index >= viewport_end) {
-            self.viewport_start = self.selected_index + 1 - max_visible_menu_items;
-        }
-    }
-
     fn visibleSuggestionCount(self: *const Editor) usize {
         if (!self.suggestions_visible or self.suggestion_count == 0) return 0;
-        return @min(self.suggestion_count - self.viewport_start, max_visible_menu_items);
+        const selector = Selector{
+            .item_count = self.suggestion_count,
+            .selected_index = self.selected_index,
+            .viewport_start = self.viewport_start,
+        };
+        return selector.visibleCount();
     }
 };
+
+pub fn runSelectionMenu(
+    allocator: std.mem.Allocator,
+    stdin: std.fs.File,
+    stdout: std.fs.File,
+    title: []const u8,
+    items: []const []const u8,
+    selected_index: usize,
+) !?usize {
+    if (items.len == 0 or !canUseInteractive(stdin, stdout)) return null;
+
+    return switch (builtin.os.tag) {
+        .windows => runSelectionMenuWindows(allocator, stdin, stdout, title, items, selected_index),
+        else => runSelectionMenuPosix(allocator, stdin, stdout, title, items, selected_index),
+    };
+}
 
 fn readInteractiveWindows(
     allocator: std.mem.Allocator,
@@ -282,6 +339,73 @@ fn readInteractivePosix(
     }
 }
 
+fn runSelectionMenuWindows(
+    allocator: std.mem.Allocator,
+    stdin: std.fs.File,
+    stdout: std.fs.File,
+    title: []const u8,
+    items: []const []const u8,
+    selected_index: usize,
+) !?usize {
+    const guard = try ConsoleInputModeGuard.enable(stdin);
+    defer guard.disable();
+
+    var selector = Selector.init(items.len, selected_index);
+    var rendered_lines: usize = 0;
+    defer if (rendered_lines > 0) clearRenderedArea(stdout, rendered_lines) catch {};
+
+    while (true) {
+        rendered_lines = try renderSelectionMenu(stdout, title, items, &selector, rendered_lines);
+        const key = try readKeyWindows(allocator, stdin);
+        defer switch (key) {
+            .char => |text| allocator.free(text),
+            else => {},
+        };
+
+        switch (key) {
+            .up => selector.moveSelection(-1),
+            .down => selector.moveSelection(1),
+            .enter => return selector.selected_index,
+            .escape => return null,
+            else => {},
+        }
+    }
+}
+
+fn runSelectionMenuPosix(
+    allocator: std.mem.Allocator,
+    stdin: std.fs.File,
+    stdout: std.fs.File,
+    title: []const u8,
+    items: []const []const u8,
+    selected_index: usize,
+) !?usize {
+    const raw = try tui.RawMode.enable(stdin.handle);
+    defer raw.disable();
+
+    const reader = tui.InputReader{ .fd = stdin.handle };
+    var selector = Selector.init(items.len, selected_index);
+    var rendered_lines: usize = 0;
+    defer if (rendered_lines > 0) clearRenderedArea(stdout, rendered_lines) catch {};
+
+    while (true) {
+        rendered_lines = try renderSelectionMenu(stdout, title, items, &selector, rendered_lines);
+        const key = try readKeyPosix(allocator, reader);
+        defer switch (key) {
+            .char => |text| allocator.free(text),
+            else => {},
+        };
+
+        switch (key) {
+            .up => selector.moveSelection(-1),
+            .down => selector.moveSelection(1),
+            .enter => return selector.selected_index,
+            .escape => return null,
+            else => {},
+        }
+    }
+}
+
 fn finalizeEditor(allocator: std.mem.Allocator, stdout: std.fs.File, editor: *Editor) ![]u8 {
     try clearRenderedArea(stdout, editor.rendered_menu_lines);
     const line = try editor.buffer.toOwnedSlice(allocator);
@@ -295,6 +419,40 @@ fn finalizeEditor(allocator: std.mem.Allocator, stdout: std.fs.File, editor: *Ed
     try writer.interface.writeAll("\n");
     try writer.interface.flush();
     return line;
+}
+
+fn renderSelectionMenu(
+    stdout: std.fs.File,
+    title: []const u8,
+    items: []const []const u8,
+    selector: *const Selector,
+    previous_lines: usize,
+) !usize {
+    try clearRenderedArea(stdout, previous_lines);
+
+    var buf: [8192]u8 = undefined;
+    var writer = stdout.writer(&buf);
+    try writer.interface.writeAll("\r");
+    try writer.interface.print("\x1b[1m{s}\x1b[0m", .{title});
+
+    const visible_count = selector.visibleCount();
+    for (0..visible_count) |offset| {
+        const absolute_index = selector.viewport_start + offset;
+        const item = items[absolute_index];
+        const is_selected = absolute_index == selector.selected_index;
+        try writer.interface.writeAll("\n");
+        if (is_selected) {
+            try writer.interface.writeAll("  \x1b[36m>\x1b[0m ");
+            try writer.interface.print("\x1b[1m{s}\x1b[0m", .{item});
+        } else {
+            try writer.interface.print("    {s}", .{item});
+        }
+    }
+    if (visible_count > 0) {
+        try writer.interface.print("\x1b[{d}A\r", .{visible_count});
+    }
+    try writer.interface.flush();
+    return visible_count;
 }
 
 fn renderEditor(stdout: std.fs.File, editor: *Editor) !void {
@@ -508,4 +666,13 @@ test "editor enter can submit selected slash command" {
 
     try std.testing.expect(std.mem.startsWith(u8, editor.buffer.items, "/"));
     try std.testing.expect(editor.buffer.items.len > 1);
+}
+
+test "selector scrolls viewport" {
+    var selector = Selector.init(10, 0);
+    for (0..max_visible_menu_items) |_| {
+        selector.moveSelection(1);
+    }
+    try std.testing.expect(selector.viewport_start > 0);
+    try std.testing.expect(selector.selected_index >= selector.viewport_start);
 }

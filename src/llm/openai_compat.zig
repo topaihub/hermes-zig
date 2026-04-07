@@ -50,18 +50,16 @@ pub const OpenAICompatClient = struct {
     }
 
     pub fn complete(self: *OpenAICompatClient, request: CompletionRequest) !CompletionResponse {
+        if (self.wire_api == .responses) {
+            return self.completeResponses(request, null);
+        }
+
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         errdefer arena.deinit();
         const a = arena.allocator();
 
-        const body = switch (self.wire_api) {
-            .chat_completions => try buildChatCompletionsRequestBody(a, request, false),
-            .responses => try buildResponsesRequestBody(a, request),
-        };
-        const url = switch (self.wire_api) {
-            .chat_completions => try std.fmt.allocPrint(a, "{s}/chat/completions", .{self.base_url}),
-            .responses => try std.fmt.allocPrint(a, "{s}/responses", .{self.base_url}),
-        };
+        const body = try buildChatCompletionsRequestBody(a, request, false);
+        const url = try std.fmt.allocPrint(a, "{s}/chat/completions", .{self.base_url});
         const auth = try std.fmt.allocPrint(a, "Bearer {s}", .{self.api_key});
 
         var resp = try self.http.send(a, .{
@@ -80,18 +78,19 @@ pub const OpenAICompatClient = struct {
             .chat_completions => try parseChatCompletionsBody(a, resp.body, &response),
             .responses => try parseResponsesBody(a, resp.body, &response),
         }
+        if (response.content == null and (response.tool_calls == null or response.tool_calls.?.len == 0)) {
+            return switch (self.wire_api) {
+                .responses => error.ResponsesEmptyOutput,
+                .chat_completions => error.EmptyResponse,
+            };
+        }
 
         return response;
     }
 
     pub fn completeStream(self: *OpenAICompatClient, request: CompletionRequest, callback: StreamCallback) !CompletionResponse {
         if (self.wire_api == .responses) {
-            const response = try self.complete(request);
-            if (response.content) |content| {
-                callback.on_delta(callback.ctx, content, false);
-            }
-            callback.on_delta(callback.ctx, "", true);
-            return response;
+            return self.completeResponses(request, callback);
         }
 
         var arena = std.heap.ArenaAllocator.init(self.allocator);
@@ -137,6 +136,85 @@ pub const OpenAICompatClient = struct {
         var response = CompletionResponse{ .arena = arena };
         if (content_buf.items.len > 0) {
             response.content = try a.dupe(u8, content_buf.items);
+        }
+        return response;
+    }
+
+    fn completeResponses(self: *OpenAICompatClient, request: CompletionRequest, callback: ?StreamCallback) !CompletionResponse {
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        errdefer arena.deinit();
+        const a = arena.allocator();
+
+        const body = try buildResponsesRequestBodyWithStream(a, request, true);
+        const url = try std.fmt.allocPrint(a, "{s}/responses", .{self.base_url});
+        const auth = try std.fmt.allocPrint(a, "Bearer {s}", .{self.api_key});
+
+        var resp = try self.http.send(a, .{
+            .method = .POST,
+            .url = url,
+            .headers = &.{
+                .{ .name = "Content-Type", .value = "application/json" },
+                .{ .name = "Authorization", .value = auth },
+            },
+            .body = body,
+        });
+        _ = &resp;
+
+        var content_buf = std.ArrayList(u8){};
+        var tool_calls = std.ArrayList(interface.ToolCall){};
+        var usage = TokenUsage{};
+
+        var sse = streaming.SseParser.init(a);
+        defer sse.deinit();
+        const payloads = try sse.feed(resp.body, a);
+
+        for (payloads) |payload| {
+            const chunk = std.json.parseFromSlice(std.json.Value, a, payload, .{}) catch continue;
+            const event_type = chunk.value.object.get("type") orelse continue;
+            if (event_type != .string) continue;
+
+            if (std.mem.eql(u8, event_type.string, "response.output_text.delta")) {
+                const delta = chunk.value.object.get("delta") orelse continue;
+                if (delta != .string or delta.string.len == 0) continue;
+                try content_buf.appendSlice(a, delta.string);
+                if (callback) |cb| cb.on_delta(cb.ctx, delta.string, false);
+            } else if (std.mem.eql(u8, event_type.string, "response.output_item.done")) {
+                const item = chunk.value.object.get("item") orelse continue;
+                if (item != .object) continue;
+                try collectResponsesItem(a, item, &content_buf, &tool_calls);
+            } else if (std.mem.eql(u8, event_type.string, "response.completed")) {
+                const response_obj = chunk.value.object.get("response") orelse continue;
+                if (response_obj != .object) continue;
+                if (response_obj.object.get("usage")) |usage_val| {
+                    if (usage_val == .object) {
+                        usage = .{
+                            .prompt_tokens = jsonInt(usage_val, "input_tokens"),
+                            .completion_tokens = jsonInt(usage_val, "output_tokens"),
+                            .total_tokens = jsonInt(usage_val, "total_tokens"),
+                        };
+                    }
+                }
+                if (content_buf.items.len == 0 or tool_calls.items.len == 0) {
+                    if (response_obj.object.get("output")) |output_val| {
+                        if (output_val == .array) {
+                            for (output_val.array.items) |item| {
+                                if (item != .object) continue;
+                                try collectResponsesItem(a, item, &content_buf, &tool_calls);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (callback) |cb| cb.on_delta(cb.ctx, "", true);
+
+        var response = CompletionResponse{ .arena = arena, .usage = usage };
+        if (content_buf.items.len > 0) response.content = try a.dupe(u8, content_buf.items);
+        if (tool_calls.items.len > 0) response.tool_calls = try tool_calls.toOwnedSlice(a);
+
+        if (response.content == null and (response.tool_calls == null or response.tool_calls.?.len == 0)) {
+            return error.ResponsesEmptyOutput;
         }
         return response;
     }
@@ -216,9 +294,17 @@ fn buildChatCompletionsRequestBody(a: std.mem.Allocator, request: CompletionRequ
 }
 
 fn buildResponsesRequestBody(a: std.mem.Allocator, request: CompletionRequest) ![]const u8 {
+    return buildResponsesRequestBodyWithStream(a, request, false);
+}
+
+fn buildResponsesRequestBodyWithStream(a: std.mem.Allocator, request: CompletionRequest, stream: bool) ![]const u8 {
     var obj = std.json.ObjectMap.init(a);
 
     try obj.put("model", .{ .string = request.model });
+    try obj.put("stream", .{ .bool = stream });
+
+    const temp_str = try std.fmt.allocPrint(a, "{d:.1}", .{request.temperature});
+    try obj.put("temperature", .{ .number_string = temp_str });
 
     var input = std.json.Array.init(a);
     for (request.messages) |msg| {
@@ -277,6 +363,50 @@ fn buildResponsesRequestBody(a: std.mem.Allocator, request: CompletionRequest) !
 
     const val = std.json.Value{ .object = obj };
     return std.json.Stringify.valueAlloc(a, val, .{});
+}
+
+fn collectResponsesItem(
+    a: std.mem.Allocator,
+    item: std.json.Value,
+    content_buf: *std.ArrayList(u8),
+    tool_calls: *std.ArrayList(interface.ToolCall),
+) !void {
+    if (item != .object) return;
+    const item_type = item.object.get("type") orelse return;
+    if (item_type != .string) return;
+
+    if (std.mem.eql(u8, item_type.string, "message")) {
+        const role = item.object.get("role") orelse return;
+        if (role != .string or !std.mem.eql(u8, role.string, "assistant")) return;
+        const content = item.object.get("content") orelse return;
+        if (content != .array) return;
+
+        if (content_buf.items.len != 0) return;
+
+        for (content.array.items) |content_item| {
+            if (content_item != .object) continue;
+            const content_type = content_item.object.get("type") orelse continue;
+            if (content_type != .string) continue;
+
+            if (std.mem.eql(u8, content_type.string, "output_text")) {
+                if (content_item.object.get("text")) |text| {
+                    if (text == .string) try content_buf.appendSlice(a, text.string);
+                }
+            } else if (std.mem.eql(u8, content_type.string, "refusal")) {
+                if (content_item.object.get("refusal")) |refusal| {
+                    if (refusal == .string) try content_buf.appendSlice(a, refusal.string);
+                }
+            }
+        }
+    } else if (std.mem.eql(u8, item_type.string, "function_call")) {
+        const call_id = if (item.object.get("call_id")) |id| (if (id == .string) id.string else "") else "";
+        const item_id = if (item.object.get("id")) |id| (if (id == .string) id.string else "") else "";
+        try tool_calls.append(a, .{
+            .id = if (call_id.len > 0) call_id else item_id,
+            .name = if (item.object.get("name")) |name| (if (name == .string) name.string else "") else "",
+            .arguments = if (item.object.get("arguments")) |args| (if (args == .string) args.string else "") else "",
+        });
+    }
 }
 
 fn parseChatCompletionsBody(a: std.mem.Allocator, body: []const u8, response: *CompletionResponse) !void {
@@ -433,6 +563,7 @@ test "buildResponsesRequestBody encodes message history and tools" {
 
     const root = parsed.value.object;
     try std.testing.expectEqualStrings("gpt-5.4", root.get("model").?.string);
+    try std.testing.expectEqual(false, root.get("stream").?.bool);
     try std.testing.expect(root.get("input").?.array.items.len == 4);
     try std.testing.expectEqualStrings("function_call_output", root.get("input").?.array.items[3].object.get("type").?.string);
     try std.testing.expectEqualStrings("call_123", root.get("input").?.array.items[3].object.get("call_id").?.string);
@@ -478,6 +609,47 @@ test "parseResponsesBody extracts text and tool calls" {
     try std.testing.expectEqual(@as(u32, 5), response.usage.completion_tokens);
     try std.testing.expectEqualStrings("call_1", response.tool_calls.?[0].id);
     try std.testing.expectEqualStrings("search_files", response.tool_calls.?[0].name);
+}
+
+test "collectResponsesItem does not duplicate streamed text" {
+    var content_buf = std.ArrayList(u8){};
+    defer content_buf.deinit(std.testing.allocator);
+    try content_buf.appendSlice(std.testing.allocator, "ok");
+
+    var tool_calls = std.ArrayList(interface.ToolCall){};
+    defer tool_calls.deinit(std.testing.allocator);
+
+    var parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        std.testing.allocator,
+        \\{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}
+    , .{});
+    defer parsed.deinit();
+
+    try collectResponsesItem(std.testing.allocator, parsed.value, &content_buf, &tool_calls);
+    try std.testing.expectEqualStrings("ok", content_buf.items);
+}
+
+test "parseResponsesBody leaves empty response empty" {
+    var response = CompletionResponse{
+        .arena = std.heap.ArenaAllocator.init(std.testing.allocator),
+    };
+    defer response.deinit();
+
+    const body =
+        \\{
+        \\  "output": [],
+        \\  "usage": {
+        \\    "input_tokens": 1,
+        \\    "output_tokens": 2,
+        \\    "total_tokens": 3
+        \\  }
+        \\}
+    ;
+
+    try parseResponsesBody(response.arena.allocator(), body, &response);
+    try std.testing.expect(response.content == null);
+    try std.testing.expect(response.tool_calls == null);
 }
 
 test "responses smoke test" {

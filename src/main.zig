@@ -62,6 +62,24 @@ fn writeF(stdout: std.fs.File, allocator: std.mem.Allocator, comptime fmt: []con
     try stdout.writeAll(msg);
 }
 
+fn renderChatErrorMessage(allocator: std.mem.Allocator, err_name: []const u8) ![]u8 {
+    if (std.mem.eql(u8, err_name, "ResponsesEmptyOutput")) {
+        return std.fmt.allocPrint(
+            allocator,
+            "Provider returned a completed responses payload with empty output. This usually means the selected gateway does not fully support responses for the current model.",
+            .{},
+        );
+    }
+    if (std.mem.eql(u8, err_name, "CertificateBundleLoadFailure")) {
+        return std.fmt.allocPrint(
+            allocator,
+            "TLS certificate bundle could not be loaded on this machine. The request could not be sent to the provider.",
+            .{},
+        );
+    }
+    return allocator.dupe(u8, err_name);
+}
+
 fn resolveConfigPathAlloc(allocator: std.mem.Allocator) ![]u8 {
     const exe_config = try exeRelativePathAlloc(allocator, config_filename);
     errdefer allocator.free(exe_config);
@@ -128,12 +146,41 @@ fn saveConfigAlloc(allocator: std.mem.Allocator, config_path: []const u8, cfg: c
     try file.writeAll(json);
 }
 
+fn ensureUtf8BomFile(path: []const u8) !void {
+    const parent = std.fs.path.dirname(path);
+    if (parent) |dir_path| {
+        if (std.fs.path.isAbsolute(dir_path)) {
+            try std.fs.cwd().makePath(dir_path);
+        } else {
+            try std.fs.cwd().makePath(dir_path);
+        }
+    }
+
+    const file = if (std.fs.path.isAbsolute(path))
+        try std.fs.createFileAbsolute(path, .{ .read = true, .truncate = false })
+    else
+        try std.fs.cwd().createFile(path, .{ .read = true, .truncate = false });
+    defer file.close();
+
+    const stat = try file.stat();
+    if (stat.size == 0) {
+        try file.writeAll("\xEF\xBB\xBF");
+    }
+}
+
 fn isConfiguredModelAllowed(cfg: *const core.Config, target_model: []const u8) bool {
     if (cfg.models.len == 0) return std.mem.eql(u8, cfg.model, target_model);
     for (cfg.models) |model_name| {
         if (std.mem.eql(u8, model_name, target_model)) return true;
     }
     return false;
+}
+
+fn findCurrentModelIndex(cfg: *const core.Config) usize {
+    for (cfg.models, 0..) |model_name, index| {
+        if (std.mem.eql(u8, model_name, cfg.model)) return index;
+    }
+    return 0;
 }
 
 fn switchModel(
@@ -227,6 +274,7 @@ pub fn main() !void {
         defer allocator.free(trace_log_dir);
         const trace_log_path = try std.fs.path.join(allocator, &.{ trace_log_dir, "hermes-trace.log" });
         defer allocator.free(trace_log_path);
+        try ensureUtf8BomFile(trace_log_path);
 
         trace_file_sink = try framework.TraceTextFileSink.init(
             allocator,
@@ -403,8 +451,11 @@ pub fn main() !void {
         };
 
         var result = agent_loop.run(request_messages, &.{}) catch |err| {
-            framework.observability.request_trace.complete(app_ctx.logger, &request_trace, 500, @errorName(err));
-            try writeF(stdout, allocator, "\n  \x1b[31mError:\x1b[0m {s}\n\n", .{@errorName(err)});
+            const err_name = @errorName(err);
+            framework.observability.request_trace.complete(app_ctx.logger, &request_trace, 500, err_name);
+            const msg = try renderChatErrorMessage(allocator, err_name);
+            defer allocator.free(msg);
+            try writeF(stdout, allocator, "\n  \x1b[31mError:\x1b[0m {s}\n\n", .{msg});
             continue;
         };
         defer result.deinit(allocator);
@@ -452,6 +503,15 @@ fn handleCommand(
         },
         .model => {
             if (parsed.arg == null) {
+                if (cfg.models.len > 0) {
+                    if (try interface.cli.runSelectionMenu(allocator, stdin, stdout, "Select model", cfg.models, findCurrentModelIndex(cfg))) |selected_index| {
+                        const selected_model = cfg.models[selected_index];
+                        _ = try switchModel(allocator, config_path, cfg, owned_model_override, selected_model);
+                        try writeF(stdout, allocator, "\n  Model switched to: \x1b[32m{s}\x1b[0m\n\n", .{selected_model});
+                        return .continue_session;
+                    }
+                }
+
                 try writeF(stdout, allocator, "\n  \x1b[1mCurrent model:\x1b[0m \x1b[32m{s}\x1b[0m\n", .{cfg.model});
                 if (cfg.models.len > 0) {
                     try stdout.writeAll("\n  \x1b[1mAvailable models:\x1b[0m\n");
@@ -972,6 +1032,12 @@ test "switchModel rejects invalid model without mutating config" {
     try std.testing.expect(!(try switchModel(std.testing.allocator, config_path, &cfg, &owned_model_override, "gpt-4.1")));
     try std.testing.expectEqualStrings("gpt-5.4", cfg.model);
     try std.testing.expect(owned_model_override == null);
+}
+
+test "renderChatErrorMessage expands responses empty output" {
+    const msg = try renderChatErrorMessage(std.testing.allocator, "ResponsesEmptyOutput");
+    defer std.testing.allocator.free(msg);
+    try std.testing.expect(std.mem.indexOf(u8, msg, "gateway does not fully support responses") != null);
 }
 
 test "Soul loading returns default when file doesn't exist" {

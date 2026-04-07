@@ -46,6 +46,7 @@ pub const renderPrompt = tui.renderPrompt;
 pub const ansi = tui.ansi;
 pub const readInputLine = input_controller.readInputLine;
 pub const canUseInteractiveInput = input_controller.canUseInteractive;
+pub const runSelectionMenu = input_controller.runSelectionMenu;
 pub const SetupWizard = setup.SetupWizard;
 pub const AuthManager = auth.AuthManager;
 pub const ProfileManager = profiles.ProfileManager;

@@ -114,7 +114,7 @@ The setup wizard creates `config.json`:
 | Command | Description |
 |---------|-------------|
 | `/setup` | Re-run setup wizard |
-| `/model` | Switch model |
+| `/model` | Open the interactive model selector when supported, or show current/available models |
 | `/config` | Show current configuration |
 | `/tools` | List available tools |
 | `/skills` | List installed skills |
@@ -136,6 +136,22 @@ When the terminal supports interactive input:
 - Press `Esc` to dismiss suggestions without submitting
 
 If the terminal does not support interactive input, hermes-zig automatically falls back to the original line-mode command entry.
+
+### Interactive Model Switching
+
+When interactive input is available and `config.json` contains a `models` list, `/model` opens an in-terminal selector:
+
+- Use `Up` / `Down` to move between configured models
+- Press `Enter` to confirm the selected model
+- Press `Esc` to cancel without changing the current model
+
+You can still switch directly by name:
+
+```text
+/model gpt-5.3-codex
+```
+
+If interactive input is unavailable, `/model` falls back to printing the current model and configured choices.
 
 ### Chat
 
