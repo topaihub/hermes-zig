@@ -47,6 +47,16 @@ extern "kernel32" fn ReadConsoleInputW(
 ) callconv(.winapi) windows.BOOL;
 
 pub fn canUseInteractive(stdin: std.fs.File, stdout: std.fs.File) bool {
+    if (builtin.os.tag == .windows) {
+        var stdin_mode: windows.DWORD = 0;
+        if (kernel32.GetConsoleMode(stdin.handle, &stdin_mode) == 0) return false;
+
+        var stdout_mode: windows.DWORD = 0;
+        if (kernel32.GetConsoleMode(stdout.handle, &stdout_mode) == 0) return false;
+
+        return stdout.getOrEnableAnsiEscapeSupport();
+    }
+
     return stdin.isTty() and stdout.getOrEnableAnsiEscapeSupport();
 }
 
@@ -81,13 +91,17 @@ const Key = union(enum) {
     unknown,
 };
 
+const max_visible_menu_items: usize = 5;
+
 const Editor = struct {
     allocator: std.mem.Allocator,
     buffer: std.ArrayList(u8) = .{},
     suggestions: [16]usize = undefined,
     suggestion_count: usize = 0,
     selected_index: usize = 0,
+    viewport_start: usize = 0,
     suggestions_visible: bool = false,
+    rendered_menu_lines: usize = 0,
 
     fn deinit(self: *Editor) void {
         self.buffer.deinit(self.allocator);
@@ -114,6 +128,7 @@ const Editor = struct {
 
     fn refreshSuggestions(self: *Editor) void {
         self.selected_index = 0;
+        self.viewport_start = 0;
         if (self.buffer.items.len == 0 or self.buffer.items[0] != '/') {
             self.suggestions_visible = false;
             self.suggestion_count = 0;
@@ -130,6 +145,7 @@ const Editor = struct {
         var next: i32 = @intCast(self.selected_index);
         next = @mod(next + delta + count, count);
         self.selected_index = @intCast(next);
+        self.ensureSelectionVisible();
     }
 
     fn completeSelection(self: *Editor) !void {
@@ -142,6 +158,22 @@ const Editor = struct {
             try self.buffer.append(self.allocator, ' ');
         }
         self.refreshSuggestions();
+    }
+
+    fn ensureSelectionVisible(self: *Editor) void {
+        if (self.selected_index < self.viewport_start) {
+            self.viewport_start = self.selected_index;
+            return;
+        }
+        const viewport_end = self.viewport_start + max_visible_menu_items;
+        if (self.selected_index >= viewport_end) {
+            self.viewport_start = self.selected_index + 1 - max_visible_menu_items;
+        }
+    }
+
+    fn visibleSuggestionCount(self: *const Editor) usize {
+        if (!self.suggestions_visible or self.suggestion_count == 0) return 0;
+        return @min(self.suggestion_count - self.viewport_start, max_visible_menu_items);
     }
 };
 
@@ -185,6 +217,9 @@ fn readInteractiveWindows(
             else
                 try editor.setBuffer(""),
             .enter => {
+                if (editor.suggestions_visible and editor.suggestion_count > 0) {
+                    try editor.completeSelection();
+                }
                 const line = try finalizeEditor(allocator, stdout, &editor);
                 if (line.len > 0) try history.add(line);
                 return line;
@@ -235,6 +270,9 @@ fn readInteractivePosix(
             else
                 try editor.setBuffer(""),
             .enter => {
+                if (editor.suggestions_visible and editor.suggestion_count > 0) {
+                    try editor.completeSelection();
+                }
                 const line = try finalizeEditor(allocator, stdout, &editor);
                 if (line.len > 0) try history.add(line);
                 return line;
@@ -245,9 +283,10 @@ fn readInteractivePosix(
 }
 
 fn finalizeEditor(allocator: std.mem.Allocator, stdout: std.fs.File, editor: *Editor) ![]u8 {
-    try clearRenderedLine(stdout);
+    try clearRenderedArea(stdout, editor.rendered_menu_lines);
     const line = try editor.buffer.toOwnedSlice(allocator);
     editor.buffer = .{};
+    editor.rendered_menu_lines = 0;
 
     var buf: [4096]u8 = undefined;
     var writer = stdout.writer(&buf);
@@ -259,29 +298,54 @@ fn finalizeEditor(allocator: std.mem.Allocator, stdout: std.fs.File, editor: *Ed
 }
 
 fn renderEditor(stdout: std.fs.File, editor: *Editor) !void {
-    try clearRenderedLine(stdout);
+    try clearRenderedArea(stdout, editor.rendered_menu_lines);
     var buf: [8192]u8 = undefined;
     var writer = stdout.writer(&buf);
     try tui.renderPrompt(&writer.interface);
     try writer.interface.writeAll(editor.buffer.items);
-    if (editor.suggestions_visible and editor.suggestion_count > 0) {
-        try writer.interface.writeAll("  ");
-        const max_items = @min(editor.suggestion_count, 5);
-        for (editor.suggestions[0..max_items], 0..) |spec_index, idx| {
-            if (idx > 0) try writer.interface.writeAll("  ");
-            const spec = commands.allPrimarySpecs()[spec_index];
-            if (idx == editor.selected_index) {
-                try writer.interface.print("[/{s}]", .{spec.literal});
+    const visible_count = editor.visibleSuggestionCount();
+    if (visible_count > 0) {
+        for (0..visible_count) |offset| {
+            const absolute_index = editor.viewport_start + offset;
+            const spec = commands.allPrimarySpecs()[editor.suggestions[absolute_index]];
+            const is_selected = absolute_index == editor.selected_index;
+
+            try writer.interface.writeAll("\n");
+            if (is_selected) {
+                try writer.interface.writeAll("  \x1b[36m>\x1b[0m ");
+                try writer.interface.print("\x1b[1m/{s}\x1b[0m", .{spec.literal});
+                const summary = truncatedSummary(spec.summary);
+                if (summary.len > 0) {
+                    try writer.interface.print(" — {s}", .{summary});
+                }
             } else {
-                try writer.interface.print("/{s}", .{spec.literal});
+                try writer.interface.print("    /{s}", .{spec.literal});
             }
         }
+        try writer.interface.print("\x1b[{d}A\r", .{visible_count});
+        try tui.renderPrompt(&writer.interface);
+        try writer.interface.writeAll(editor.buffer.items);
     }
     try writer.interface.flush();
+    editor.rendered_menu_lines = visible_count;
 }
 
-fn clearRenderedLine(stdout: std.fs.File) !void {
+fn clearRenderedArea(stdout: std.fs.File, rendered_menu_lines: usize) !void {
     try stdout.writeAll("\r\x1b[2K");
+    for (0..rendered_menu_lines) |_| {
+        try stdout.writeAll("\n\r\x1b[2K");
+    }
+    if (rendered_menu_lines > 0) {
+        var buf: [32]u8 = undefined;
+        const seq = try std.fmt.bufPrint(&buf, "\x1b[{d}A\r", .{rendered_menu_lines});
+        try stdout.writeAll(seq);
+    }
+}
+
+fn truncatedSummary(summary: []const u8) []const u8 {
+    const max_len = 48;
+    if (summary.len <= max_len) return summary;
+    return summary[0..max_len];
 }
 
 fn readLineFallback(allocator: std.mem.Allocator, stdin: std.fs.File) !?[]u8 {
@@ -417,4 +481,31 @@ test "editor leaving slash mode hides suggestions" {
     try std.testing.expect(editor.suggestions_visible);
     editor.backspace();
     try std.testing.expect(!editor.suggestions_visible);
+}
+
+test "editor selection scrolls viewport" {
+    var editor = Editor{ .allocator = std.testing.allocator };
+    defer editor.deinit();
+
+    try editor.appendText("/");
+    try std.testing.expect(editor.suggestion_count > max_visible_menu_items);
+
+    for (0..max_visible_menu_items) |_| {
+        editor.moveSelection(1);
+    }
+
+    try std.testing.expect(editor.viewport_start > 0);
+    try std.testing.expect(editor.selected_index >= editor.viewport_start);
+}
+
+test "editor enter can submit selected slash command" {
+    var editor = Editor{ .allocator = std.testing.allocator };
+    defer editor.deinit();
+
+    try editor.appendText("/");
+    try std.testing.expect(editor.suggestions_visible);
+    try editor.completeSelection();
+
+    try std.testing.expect(std.mem.startsWith(u8, editor.buffer.items, "/"));
+    try std.testing.expect(editor.buffer.items.len > 1);
 }

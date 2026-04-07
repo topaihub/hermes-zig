@@ -120,6 +120,40 @@ fn readConfigFileAlloc(allocator: std.mem.Allocator, config_path: []const u8, ma
     return std.fs.cwd().readFileAlloc(allocator, config_path, max_bytes);
 }
 
+fn saveConfigAlloc(allocator: std.mem.Allocator, config_path: []const u8, cfg: core.Config) !void {
+    const json = try std.json.Stringify.valueAlloc(allocator, cfg, .{ .whitespace = .indent_2 });
+    defer allocator.free(json);
+    var file = try createConfigFile(config_path);
+    defer file.close();
+    try file.writeAll(json);
+}
+
+fn isConfiguredModelAllowed(cfg: *const core.Config, target_model: []const u8) bool {
+    if (cfg.models.len == 0) return std.mem.eql(u8, cfg.model, target_model);
+    for (cfg.models) |model_name| {
+        if (std.mem.eql(u8, model_name, target_model)) return true;
+    }
+    return false;
+}
+
+fn switchModel(
+    allocator: std.mem.Allocator,
+    config_path: []const u8,
+    cfg: *core.Config,
+    owned_model_override: *?[]u8,
+    target_model: []const u8,
+) !bool {
+    if (!isConfiguredModelAllowed(cfg, target_model)) return false;
+
+    const owned_model = try allocator.dupe(u8, target_model);
+    errdefer allocator.free(owned_model);
+    if (owned_model_override.*) |previous| allocator.free(previous);
+    owned_model_override.* = owned_model;
+    cfg.model = owned_model;
+    try saveConfigAlloc(allocator, config_path, cfg.*);
+    return true;
+}
+
 pub fn main() !void {
     initConsole();
     const stdout = std.fs.File.stdout();
@@ -251,6 +285,9 @@ pub fn main() !void {
     var skills_runtime = try interface.cli.SkillsRuntime.init(allocator);
     defer skills_runtime.deinit();
     skills_runtime.reload() catch {};
+    var session_usage = core.TokenUsage{};
+    var owned_model_override: ?[]u8 = null;
+    defer if (owned_model_override) |model_name| allocator.free(model_name);
 
     // Load soul for system prompt
     const hermes_home = try core.soul.getHermesHome(allocator);
@@ -305,7 +342,17 @@ pub fn main() !void {
             var request_trace = try framework.observability.request_trace.begin(allocator, app_ctx.logger, .cli, request_id, "COMMAND", input, null);
             defer request_trace.deinit();
 
-            const action = handleCommand(allocator, input, stdout, stdin, config_path, &skills_runtime) catch |err| {
+            const action = handleCommand(
+                allocator,
+                input,
+                stdout,
+                stdin,
+                config_path,
+                &cfg,
+                &owned_model_override,
+                &skills_runtime,
+                &session_usage,
+            ) catch |err| {
                 framework.observability.request_trace.complete(app_ctx.logger, &request_trace, 500, @errorName(err));
                 return err;
             };
@@ -363,6 +410,9 @@ pub fn main() !void {
         defer result.deinit(allocator);
 
         framework.observability.request_trace.complete(app_ctx.logger, &request_trace, 200, null);
+        session_usage.prompt_tokens += result.usage.prompt_tokens;
+        session_usage.completion_tokens += result.usage.completion_tokens;
+        session_usage.total_tokens += result.usage.total_tokens;
 
         try stdout.writeAll("\n  \x1b[33m⚡ Agent:\x1b[0m ");
         try stdout.writeAll(result.content);
@@ -383,7 +433,10 @@ fn handleCommand(
     stdout: std.fs.File,
     stdin: std.fs.File,
     config_path: []const u8,
+    cfg: *core.Config,
+    owned_model_override: *?[]u8,
     skills_runtime: *interface.cli.SkillsRuntime,
+    session_usage: *core.TokenUsage,
 ) !CommandAction {
     const parsed = interface.cli.parseCommand(input) orelse return .continue_session;
 
@@ -399,19 +452,6 @@ fn handleCommand(
         },
         .model => {
             if (parsed.arg == null) {
-                const content = readConfigFileAlloc(allocator, config_path, 64 * 1024) catch {
-                    try stdout.writeAll("\n  No config found. Run /setup first.\n\n");
-                    return .continue_session;
-                };
-                defer allocator.free(content);
-
-                var loaded = core.config_loader.loadFromString(content, allocator) catch {
-                    try stdout.writeAll("\n  Config parse error.\n\n");
-                    return .continue_session;
-                };
-                defer loaded.deinit();
-                const cfg = loaded.parsed.value;
-
                 try writeF(stdout, allocator, "\n  \x1b[1mCurrent model:\x1b[0m \x1b[32m{s}\x1b[0m\n", .{cfg.model});
                 if (cfg.models.len > 0) {
                     try stdout.writeAll("\n  \x1b[1mAvailable models:\x1b[0m\n");
@@ -426,21 +466,19 @@ fn handleCommand(
                 return .continue_session;
             }
 
-            const content = readConfigFileAlloc(allocator, config_path, 64 * 1024) catch {
-                try stdout.writeAll("\n  No config found. Run /setup first.\n\n");
+            const target_model = parsed.arg.?;
+            if (!(try switchModel(allocator, config_path, cfg, owned_model_override, target_model))) {
+                try writeF(stdout, allocator, "\n  Invalid model: {s}\n", .{target_model});
+                if (cfg.models.len > 0) {
+                    try stdout.writeAll("  Choose one of the configured models:\n");
+                    for (cfg.models) |m| {
+                        try writeF(stdout, allocator, "    • {s}\n", .{m});
+                    }
+                }
+                try stdout.writeAll("\n");
                 return .continue_session;
-            };
-            defer allocator.free(content);
-            if (std.mem.indexOf(u8, content, "\"model\"")) |_| {
-                var parsed_json = std.json.parseFromSlice(std.json.Value, allocator, content, .{}) catch {
-                    try stdout.writeAll("\n  Config parse error.\n\n");
-                    return .continue_session;
-                };
-                defer parsed_json.deinit();
-                const new_cfg = try std.fmt.allocPrint(allocator, "{s}", .{content});
-                defer allocator.free(new_cfg);
-                try writeF(stdout, allocator, "\n  Model switched to: \x1b[32m{s}\x1b[0m\n\n", .{parsed.arg.?});
             }
+            try writeF(stdout, allocator, "\n  Model switched to: \x1b[32m{s}\x1b[0m\n\n", .{target_model});
             return .continue_session;
         },
         .skills => {
@@ -472,39 +510,11 @@ fn handleCommand(
             try stdout.writeAll("\n  Cleared active skill for this session.\n\n");
             return .continue_session;
         },
-        .auth => {
-            try @import("interface/cli/auth_cmd.zig").handleAuthCommand(allocator, parsed.arg orelse "", stdout);
-            return .continue_session;
-        },
-        .tools_config => {
-            try @import("interface/cli/tools_config.zig").handleToolsCommand(allocator, parsed.arg orelse "", stdout);
-            return .continue_session;
-        },
-        .mcp => {
-            try @import("interface/cli/mcp_config.zig").handleMcpCommand(allocator, parsed.arg orelse "", stdout);
-            return .continue_session;
-        },
-        .cron => {
-            try @import("interface/cli/cron_cmd.zig").handleCronCommand(allocator, parsed.arg orelse "", stdout);
-            return .continue_session;
-        },
-        .hub => {
-            try @import("interface/cli/skills_hub_cmd.zig").handleSkillsHubCommand(allocator, parsed.arg orelse "", stdout);
-            return .continue_session;
-        },
-        .claw => {
-            try @import("interface/cli/claw.zig").handleClawCommand(allocator, parsed.arg orelse "", stdout);
-            return .continue_session;
-        },
-        .pairing => {
-            try @import("interface/cli/pairing.zig").handlePairingCommand(allocator, parsed.arg orelse "", stdout);
-            return .continue_session;
-        },
         .usage => {
             try stdout.writeAll("\n  \x1b[1mUsage:\x1b[0m\n");
-            try stdout.writeAll("    Prompt tokens:     0\n");
-            try stdout.writeAll("    Completion tokens: 0\n");
-            try stdout.writeAll("    Total tokens:      0\n\n");
+            try writeF(stdout, allocator, "    Prompt tokens:     {d}\n", .{session_usage.prompt_tokens});
+            try writeF(stdout, allocator, "    Completion tokens: {d}\n", .{session_usage.completion_tokens});
+            try writeF(stdout, allocator, "    Total tokens:      {d}\n\n", .{session_usage.total_tokens});
             return .continue_session;
         },
         .help => {
@@ -871,6 +881,97 @@ test "setup config json includes api_base_url" {
     try std.testing.expectEqualStrings("custom", loaded.parsed.value.provider);
     try std.testing.expectEqualStrings("https://api.example.com/v1", loaded.parsed.value.api_base_url);
     try std.testing.expectEqualStrings("responses", loaded.parsed.value.wire_api);
+}
+
+test "isConfiguredModelAllowed matches configured list" {
+    const cfg = core.Config{
+        .model = "gpt-5.4",
+        .models = &.{ "gpt-5.4", "gpt-4.1" },
+    };
+    try std.testing.expect(isConfiguredModelAllowed(&cfg, "gpt-5.4"));
+    try std.testing.expect(!isConfiguredModelAllowed(&cfg, "claude-sonnet"));
+}
+
+test "saveConfigAlloc writes configured model list" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_dir_rel = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", tmp.sub_path[0..] });
+    defer std.testing.allocator.free(tmp_dir_rel);
+    const tmp_dir_abs = try std.fs.cwd().realpathAlloc(std.testing.allocator, tmp_dir_rel);
+    defer std.testing.allocator.free(tmp_dir_abs);
+    const config_path = try std.fs.path.join(std.testing.allocator, &.{ tmp_dir_abs, "config.json" });
+    defer std.testing.allocator.free(config_path);
+
+    const cfg = core.Config{
+        .provider = "custom",
+        .model = "gpt-5.4",
+        .models = &.{ "gpt-5.4" },
+        .api_base_url = "https://example.com",
+        .wire_api = "responses",
+    };
+    try saveConfigAlloc(std.testing.allocator, config_path, cfg);
+
+    const file = try std.fs.openFileAbsolute(config_path, .{});
+    defer file.close();
+    const content = try file.readToEndAlloc(std.testing.allocator, 4096);
+    defer std.testing.allocator.free(content);
+    try std.testing.expect(std.mem.indexOf(u8, content, "\"models\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, content, "\"gpt-5.4\"") != null);
+}
+
+test "switchModel updates in-memory config and writes file" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_dir_rel = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", tmp.sub_path[0..] });
+    defer std.testing.allocator.free(tmp_dir_rel);
+    const tmp_dir_abs = try std.fs.cwd().realpathAlloc(std.testing.allocator, tmp_dir_rel);
+    defer std.testing.allocator.free(tmp_dir_abs);
+    const config_path = try std.fs.path.join(std.testing.allocator, &.{ tmp_dir_abs, "config.json" });
+    defer std.testing.allocator.free(config_path);
+
+    var cfg = core.Config{
+        .provider = "custom",
+        .model = "gpt-5.4",
+        .models = &.{ "gpt-5.4", "gpt-4.1" },
+        .api_base_url = "https://example.com",
+        .wire_api = "responses",
+    };
+    var owned_model_override: ?[]u8 = null;
+    defer if (owned_model_override) |m| std.testing.allocator.free(m);
+
+    try std.testing.expect(try switchModel(std.testing.allocator, config_path, &cfg, &owned_model_override, "gpt-4.1"));
+    try std.testing.expectEqualStrings("gpt-4.1", cfg.model);
+
+    const file = try std.fs.openFileAbsolute(config_path, .{});
+    defer file.close();
+    const content = try file.readToEndAlloc(std.testing.allocator, 4096);
+    defer std.testing.allocator.free(content);
+    try std.testing.expect(std.mem.indexOf(u8, content, "\"model\": \"gpt-4.1\"") != null);
+}
+
+test "switchModel rejects invalid model without mutating config" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_dir_rel = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", tmp.sub_path[0..] });
+    defer std.testing.allocator.free(tmp_dir_rel);
+    const tmp_dir_abs = try std.fs.cwd().realpathAlloc(std.testing.allocator, tmp_dir_rel);
+    defer std.testing.allocator.free(tmp_dir_abs);
+    const config_path = try std.fs.path.join(std.testing.allocator, &.{ tmp_dir_abs, "config.json" });
+    defer std.testing.allocator.free(config_path);
+
+    var cfg = core.Config{
+        .model = "gpt-5.4",
+        .models = &.{ "gpt-5.4" },
+    };
+    var owned_model_override: ?[]u8 = null;
+    defer if (owned_model_override) |m| std.testing.allocator.free(m);
+
+    try std.testing.expect(!(try switchModel(std.testing.allocator, config_path, &cfg, &owned_model_override, "gpt-4.1")));
+    try std.testing.expectEqualStrings("gpt-5.4", cfg.model);
+    try std.testing.expect(owned_model_override == null);
 }
 
 test "Soul loading returns default when file doesn't exist" {

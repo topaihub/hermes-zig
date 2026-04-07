@@ -4,18 +4,11 @@ pub const CommandId = enum {
     new_session,
     model,
     tools,
-    tools_config,
     skills,
     skills_view,
     skills_use,
     skills_clear,
     skills_config,
-    auth,
-    mcp,
-    cron,
-    hub,
-    claw,
-    pairing,
     config,
     setup,
     usage,
@@ -39,22 +32,15 @@ pub const ParsedCommand = struct {
 const primary_specs = [_]CommandSpec{
     .{ .id = .setup, .literal = "setup", .summary = "Configure provider, API key, and model" },
     .{ .id = .config, .literal = "config", .summary = "Show current configuration" },
-    .{ .id = .model, .literal = "model", .summary = "Show or switch model", .takes_arg = true },
+    .{ .id = .model, .literal = "model", .summary = "Show configured models or switch model", .takes_arg = true },
     .{ .id = .new_session, .literal = "new", .summary = "Start a new conversation" },
     .{ .id = .tools, .literal = "tools", .summary = "List available tools" },
-    .{ .id = .tools_config, .literal = "tools config", .summary = "Configure tool behavior", .takes_arg = true },
     .{ .id = .skills, .literal = "skills", .summary = "List installed skills" },
     .{ .id = .skills_view, .literal = "skills view", .summary = "View a skill body", .takes_arg = true },
     .{ .id = .skills_use, .literal = "skills use", .summary = "Activate a skill for this session", .takes_arg = true },
     .{ .id = .skills_clear, .literal = "skills clear", .summary = "Clear the active skill for this session" },
     .{ .id = .skills_config, .literal = "skills config", .summary = "Show the resolved skills directory" },
-    .{ .id = .auth, .literal = "auth", .summary = "Manage auth credentials", .takes_arg = true },
-    .{ .id = .mcp, .literal = "mcp", .summary = "Configure MCP integrations", .takes_arg = true },
-    .{ .id = .cron, .literal = "cron", .summary = "Manage cron scheduler", .takes_arg = true },
-    .{ .id = .hub, .literal = "hub", .summary = "Browse the skills hub", .takes_arg = true },
-    .{ .id = .claw, .literal = "claw", .summary = "Run OpenClaw migration commands", .takes_arg = true },
-    .{ .id = .pairing, .literal = "pairing", .summary = "Manage pairing workflow", .takes_arg = true },
-    .{ .id = .usage, .literal = "usage", .summary = "Show token usage" },
+    .{ .id = .usage, .literal = "usage", .summary = "Show accumulated token usage" },
     .{ .id = .help, .literal = "help", .summary = "Show available commands" },
     .{ .id = .quit, .literal = "quit", .summary = "Exit hermes-zig" },
 };
@@ -172,4 +158,15 @@ test "matchesForPrefix returns filtered primary commands" {
     const count = matchesForPrefix("skills ", &indices);
     try std.testing.expect(count >= 3);
     try std.testing.expectEqualStrings("skills view", primary_specs[indices[0]].literal);
+}
+
+test "primary command surface excludes deferred placeholder commands" {
+    for (primary_specs) |spec| {
+        try std.testing.expect(!std.mem.eql(u8, spec.literal, "auth"));
+        try std.testing.expect(!std.mem.eql(u8, spec.literal, "mcp"));
+        try std.testing.expect(!std.mem.eql(u8, spec.literal, "cron"));
+        try std.testing.expect(!std.mem.eql(u8, spec.literal, "hub"));
+        try std.testing.expect(!std.mem.eql(u8, spec.literal, "pairing"));
+        try std.testing.expect(!std.mem.eql(u8, spec.literal, "tools config"));
+    }
 }
