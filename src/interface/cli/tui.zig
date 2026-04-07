@@ -33,7 +33,8 @@ pub const RawMode = struct {
     pub fn enable(fd: posix.fd_t) !RawMode {
         const original = try posix.tcgetattr(fd);
         var raw = original;
-        raw.lflag = raw.lflag.fromInt(raw.lflag.toInt() & ~@as(u32, posix.tc_lflag.ICANON | posix.tc_lflag.ECHO));
+        raw.lflag.ICANON = false;
+        raw.lflag.ECHO = false;
         raw.cc[@intFromEnum(posix.V.MIN)] = 0;
         raw.cc[@intFromEnum(posix.V.TIME)] = 1;
         try posix.tcsetattr(fd, .FLUSH, raw);
