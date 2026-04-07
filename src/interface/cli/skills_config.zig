@@ -191,7 +191,7 @@ fn buildMenuEntries(allocator: Allocator, skills_runtime: *const SkillsRuntime) 
         else
             "[skill ]";
         const label = if (skill.description.len > 0)
-            try std.fmt.allocPrint(allocator, "{s} {s} - {s}", .{ state, skill.name, skill.description })
+            try std.fmt.allocPrint(allocator, "{s} {s} - {s}", .{ state, skill.name, truncateMenuDescription(skill.description) })
         else
             try std.fmt.allocPrint(allocator, "{s} {s}", .{ state, skill.name });
         try entries.append(allocator, .{
@@ -260,6 +260,12 @@ fn applyMenuAction(
     }
 }
 
+fn truncateMenuDescription(description: []const u8) []const u8 {
+    const max_len = 56;
+    if (description.len <= max_len) return description;
+    return description[0..max_len];
+}
+
 test "renderSkillsStateAlloc shows empty guidance with directory" {
     var runtime = try SkillsRuntime.init(std.testing.allocator);
     defer runtime.deinit();
@@ -319,4 +325,10 @@ test "applyMenuAction activates and clears session skill state" {
     try std.testing.expectEqualStrings("Cleared active skill", clear_result.message);
     try std.testing.expect(clear_result.mutated);
     try std.testing.expect(runtime.active == null);
+}
+
+test "truncateMenuDescription caps long descriptions" {
+    const long = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-extra";
+    const truncated = truncateMenuDescription(long);
+    try std.testing.expectEqual(@as(usize, 56), truncated.len);
 }
