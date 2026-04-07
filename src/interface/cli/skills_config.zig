@@ -122,9 +122,6 @@ fn renderSkillsStateAlloc(allocator: Allocator, skills_runtime: *const SkillsRun
         else
             "";
         try w.print("    • {s}{s}\n", .{ skill.name, marker });
-        if (skill.description.len > 0) {
-            try w.print("      {s}\n", .{skill.description});
-        }
     }
     if (skills_runtime.activeName()) |_| {
         try w.writeAll("    /skills clear to remove the active session skill\n");
@@ -190,10 +187,7 @@ fn buildMenuEntries(allocator: Allocator, skills_runtime: *const SkillsRuntime) 
             if (std.mem.eql(u8, active_name, skill.name)) "[active]" else "[skill ]"
         else
             "[skill ]";
-        const label = if (skill.description.len > 0)
-            try std.fmt.allocPrint(allocator, "{s} {s} - {s}", .{ state, skill.name, truncateMenuDescription(skill.description) })
-        else
-            try std.fmt.allocPrint(allocator, "{s} {s}", .{ state, skill.name });
+        const label = try std.fmt.allocPrint(allocator, "{s} {s}", .{ state, skill.name });
         try entries.append(allocator, .{
             .label = label,
             .action = .{ .activate = skill.name },
@@ -260,12 +254,6 @@ fn applyMenuAction(
     }
 }
 
-fn truncateMenuDescription(description: []const u8) []const u8 {
-    const max_len = 56;
-    if (description.len <= max_len) return description;
-    return description[0..max_len];
-}
-
 test "renderSkillsStateAlloc shows empty guidance with directory" {
     var runtime = try SkillsRuntime.init(std.testing.allocator);
     defer runtime.deinit();
@@ -327,8 +315,19 @@ test "applyMenuAction activates and clears session skill state" {
     try std.testing.expect(runtime.active == null);
 }
 
-test "truncateMenuDescription caps long descriptions" {
-    const long = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-extra";
-    const truncated = truncateMenuDescription(long);
-    try std.testing.expectEqual(@as(usize, 56), truncated.len);
+test "buildMenuEntries only shows skill names" {
+    var runtime = try SkillsRuntime.init(std.testing.allocator);
+    defer runtime.deinit();
+
+    runtime.installed = try std.testing.allocator.alloc(@import("../../intelligence/skills_loader.zig").SkillDefinition, 1);
+    runtime.installed[0] = .{
+        .name = try std.testing.allocator.dupe(u8, "openspec-apply-change"),
+        .description = try std.testing.allocator.dupe(u8, "Implement tasks from an OpenSpec change with a very long explanation"),
+        .body = try std.testing.allocator.dupe(u8, "body"),
+        .allocator = std.testing.allocator,
+    };
+
+    const entries = try buildMenuEntries(std.testing.allocator, &runtime);
+    defer freeMenuEntries(std.testing.allocator, entries);
+    try std.testing.expectEqualStrings("[skill ] openspec-apply-change", entries[0].label);
 }
