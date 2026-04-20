@@ -50,54 +50,26 @@ pub const OpenAICompatClient = struct {
     }
 
     pub fn complete(self: *OpenAICompatClient, request: CompletionRequest) !CompletionResponse {
-        if (self.wire_api == .responses) {
-            return self.completeResponses(request, null);
-        }
-
-        var arena = std.heap.ArenaAllocator.init(self.allocator);
-        errdefer arena.deinit();
-        const a = arena.allocator();
-
-        const body = try buildChatCompletionsRequestBody(a, request, false);
-        const url = try std.fmt.allocPrint(a, "{s}/chat/completions", .{self.base_url});
-        const auth = try std.fmt.allocPrint(a, "Bearer {s}", .{self.api_key});
-
-        var resp = try self.http.send(a, .{
-            .method = .POST,
-            .url = url,
-            .headers = &.{
-                .{ .name = "Content-Type", .value = "application/json" },
-                .{ .name = "Authorization", .value = auth },
-            },
-            .body = body,
-        });
-        _ = &resp;
-
-        var response = CompletionResponse{ .arena = arena };
-        switch (self.wire_api) {
-            .chat_completions => try parseChatCompletionsBody(a, resp.body, &response),
-            .responses => try parseResponsesBody(a, resp.body, &response),
-        }
-        if (response.content == null and (response.tool_calls == null or response.tool_calls.?.len == 0)) {
-            return switch (self.wire_api) {
-                .responses => error.ResponsesEmptyOutput,
-                .chat_completions => error.EmptyResponse,
-            };
-        }
-
-        return response;
+        return switch (self.wire_api) {
+            .chat_completions => self.completeChatCompletions(request, null),
+            .responses => self.completeResponses(request, null),
+        };
     }
 
     pub fn completeStream(self: *OpenAICompatClient, request: CompletionRequest, callback: StreamCallback) !CompletionResponse {
-        if (self.wire_api == .responses) {
-            return self.completeResponses(request, callback);
-        }
+        return switch (self.wire_api) {
+            .chat_completions => self.completeChatCompletions(request, callback),
+            .responses => self.completeResponses(request, callback),
+        };
+    }
 
+    fn completeChatCompletions(self: *OpenAICompatClient, request: CompletionRequest, callback: ?StreamCallback) !CompletionResponse {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         errdefer arena.deinit();
         const a = arena.allocator();
 
-        const body = try buildChatCompletionsRequestBody(a, request, true);
+        const stream = callback != null;
+        const body = try buildChatCompletionsRequestBody(a, request, stream);
         const url = try std.fmt.allocPrint(a, "{s}/chat/completions", .{self.base_url});
         const auth = try std.fmt.allocPrint(a, "Bearer {s}", .{self.api_key});
 
@@ -112,40 +84,68 @@ pub const OpenAICompatClient = struct {
         });
         _ = &resp;
 
-        // Parse SSE from response body
-        var content_buf = std.ArrayList(u8){};
-        var sse = streaming.SseParser.init(a);
-        defer sse.deinit();
-
-        const payloads = try sse.feed(resp.body, a);
-        for (payloads) |payload| {
-            const chunk = std.json.parseFromSlice(std.json.Value, a, payload, .{}) catch continue;
-            const choices = chunk.value.object.get("choices") orelse continue;
-            if (choices != .array or choices.array.items.len == 0) continue;
-            const delta_obj = choices.array.items[0].object.get("delta") orelse continue;
-            if (delta_obj != .object) continue;
-            if (delta_obj.object.get("content")) |c| {
-                if (c == .string) {
-                    try content_buf.appendSlice(a, c.string);
-                    callback.on_delta(callback.ctx, c.string, false);
-                }
-            }
-        }
-        callback.on_delta(callback.ctx, "", true);
-
         var response = CompletionResponse{ .arena = arena };
-        if (content_buf.items.len > 0) {
-            response.content = try a.dupe(u8, content_buf.items);
+        if (bodyLooksLikeSse(resp.body)) {
+            var content_buf = std.ArrayList(u8){};
+            defer content_buf.deinit(a);
+
+            var sse = streaming.SseParser.init(a);
+            defer sse.deinit();
+
+            const payloads = try sse.feed(resp.body, a);
+            for (payloads) |payload| {
+                const chunk = std.json.parseFromSlice(std.json.Value, a, payload, .{}) catch continue;
+                _ = try collectChatCompletionsPayload(a, chunk.value, &content_buf, callback);
+            }
+
+            if (callback) |cb| cb.on_delta(cb.ctx, "", true);
+            if (content_buf.items.len > 0) {
+                response.content = try a.dupe(u8, content_buf.items);
+            }
+            if (response.content == null) {
+                return error.EmptyResponse;
+            }
+            return response;
+        }
+
+        try parseCompatBody(a, resp.body, &response);
+        if (callback) |cb| {
+            if (response.content) |content| {
+                cb.on_delta(cb.ctx, content, false);
+            }
+            cb.on_delta(cb.ctx, "", true);
+        }
+        if (looksLikeCompactionSummary(response.content) and (response.tool_calls == null or response.tool_calls.?.len == 0)) {
+            return error.EmptyResponse;
+        }
+        if (response.content == null and (response.tool_calls == null or response.tool_calls.?.len == 0)) {
+            return error.EmptyResponse;
         }
         return response;
     }
 
     fn completeResponses(self: *OpenAICompatClient, request: CompletionRequest, callback: ?StreamCallback) !CompletionResponse {
+        // Some relays expose /responses but return legacy chat/completions payloads.
+        return self.completeResponsesOnce(request, callback) catch |err| switch (err) {
+            error.ResponsesEmptyOutput, error.InvalidJson => {
+                if (callback == null) {
+                    return self.completeChatCompletions(request, null) catch |fallback_err| switch (fallback_err) {
+                        error.EmptyResponse => error.ResponsesEmptyOutput,
+                        else => return fallback_err,
+                    };
+                }
+                return err;
+            },
+            else => return err,
+        };
+    }
+
+    fn completeResponsesOnce(self: *OpenAICompatClient, request: CompletionRequest, callback: ?StreamCallback) !CompletionResponse {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         errdefer arena.deinit();
         const a = arena.allocator();
 
-        const body = try buildResponsesRequestBodyWithStream(a, request, true);
+        const body = try buildResponsesRequestBodyWithStream(a, request, callback != null);
         const url = try std.fmt.allocPrint(a, "{s}/responses", .{self.base_url});
         const auth = try std.fmt.allocPrint(a, "Bearer {s}", .{self.api_key});
 
@@ -161,58 +161,88 @@ pub const OpenAICompatClient = struct {
         _ = &resp;
 
         var content_buf = std.ArrayList(u8){};
+        defer content_buf.deinit(a);
+
         var tool_calls = std.ArrayList(interface.ToolCall){};
+        defer tool_calls.deinit(a);
+
         var usage = TokenUsage{};
+        var response = CompletionResponse{ .arena = arena, .usage = usage };
 
-        var sse = streaming.SseParser.init(a);
-        defer sse.deinit();
-        const payloads = try sse.feed(resp.body, a);
+        if (bodyLooksLikeSse(resp.body)) {
+            var sse = streaming.SseParser.init(a);
+            defer sse.deinit();
 
-        for (payloads) |payload| {
-            const chunk = std.json.parseFromSlice(std.json.Value, a, payload, .{}) catch continue;
-            const event_type = chunk.value.object.get("type") orelse continue;
-            if (event_type != .string) continue;
+            const payloads = try sse.feed(resp.body, a);
 
-            if (std.mem.eql(u8, event_type.string, "response.output_text.delta")) {
-                const delta = chunk.value.object.get("delta") orelse continue;
-                if (delta != .string or delta.string.len == 0) continue;
-                try content_buf.appendSlice(a, delta.string);
-                if (callback) |cb| cb.on_delta(cb.ctx, delta.string, false);
-            } else if (std.mem.eql(u8, event_type.string, "response.output_item.done")) {
-                const item = chunk.value.object.get("item") orelse continue;
-                if (item != .object) continue;
-                try collectResponsesItem(a, item, &content_buf, &tool_calls);
-            } else if (std.mem.eql(u8, event_type.string, "response.completed")) {
-                const response_obj = chunk.value.object.get("response") orelse continue;
-                if (response_obj != .object) continue;
-                if (response_obj.object.get("usage")) |usage_val| {
-                    if (usage_val == .object) {
-                        usage = .{
-                            .prompt_tokens = jsonInt(usage_val, "input_tokens"),
-                            .completion_tokens = jsonInt(usage_val, "output_tokens"),
-                            .total_tokens = jsonInt(usage_val, "total_tokens"),
-                        };
-                    }
-                }
-                if (content_buf.items.len == 0 or tool_calls.items.len == 0) {
-                    if (response_obj.object.get("output")) |output_val| {
-                        if (output_val == .array) {
-                            for (output_val.array.items) |item| {
-                                if (item != .object) continue;
-                                try collectResponsesItem(a, item, &content_buf, &tool_calls);
+            for (payloads) |payload| {
+                const chunk = std.json.parseFromSlice(std.json.Value, a, payload, .{}) catch continue;
+                var handled = false;
+
+                const event_type = chunk.value.object.get("type") orelse null;
+                if (event_type) |et| {
+                    if (et == .string) {
+                        if (std.mem.eql(u8, et.string, "response.output_text.delta")) {
+                            const delta = chunk.value.object.get("delta") orelse continue;
+                            if (delta != .string or delta.string.len == 0) continue;
+                            try content_buf.appendSlice(a, delta.string);
+                            if (callback) |cb| cb.on_delta(cb.ctx, delta.string, false);
+                            handled = true;
+                        } else if (std.mem.eql(u8, et.string, "response.output_item.done")) {
+                            const item = chunk.value.object.get("item") orelse continue;
+                            if (item != .object) continue;
+                            try collectResponsesItem(a, item, &content_buf, &tool_calls);
+                            handled = true;
+                        } else if (std.mem.eql(u8, et.string, "response.completed")) {
+                            const response_obj = chunk.value.object.get("response") orelse continue;
+                            if (response_obj != .object) continue;
+                            if (response_obj.object.get("usage")) |usage_val| {
+                                if (usage_val == .object) {
+                                    usage = .{
+                                        .prompt_tokens = jsonInt(usage_val, "input_tokens"),
+                                        .completion_tokens = jsonInt(usage_val, "output_tokens"),
+                                        .total_tokens = jsonInt(usage_val, "total_tokens"),
+                                    };
+                                }
                             }
+                            if (content_buf.items.len == 0 or tool_calls.items.len == 0) {
+                                if (response_obj.object.get("output")) |output_val| {
+                                    if (output_val == .array) {
+                                        for (output_val.array.items) |item| {
+                                            if (item != .object) continue;
+                                            try collectResponsesItem(a, item, &content_buf, &tool_calls);
+                                        }
+                                    }
+                                }
+                            }
+                            handled = true;
                         }
                     }
                 }
+
+                if (!handled) {
+                    _ = try collectChatCompletionsPayload(a, chunk.value, &content_buf, callback);
+                }
+            }
+        } else {
+            try parseCompatBody(a, resp.body, &response);
+            if (callback) |cb| {
+                if (response.content) |content| {
+                    cb.on_delta(cb.ctx, content, false);
+                }
+                cb.on_delta(cb.ctx, "", true);
             }
         }
 
-        if (callback) |cb| cb.on_delta(cb.ctx, "", true);
-
-        var response = CompletionResponse{ .arena = arena, .usage = usage };
+        if (bodyLooksLikeSse(resp.body)) {
+            response.usage = usage;
+        }
         if (content_buf.items.len > 0) response.content = try a.dupe(u8, content_buf.items);
         if (tool_calls.items.len > 0) response.tool_calls = try tool_calls.toOwnedSlice(a);
 
+        if (looksLikeCompactionSummary(response.content) and (response.tool_calls == null or response.tool_calls.?.len == 0)) {
+            return error.ResponsesEmptyOutput;
+        }
         if (response.content == null and (response.tool_calls == null or response.tool_calls.?.len == 0)) {
             return error.ResponsesEmptyOutput;
         }
@@ -244,6 +274,72 @@ fn jsonInt(obj: std.json.Value, key: []const u8) u32 {
 fn parseWireApi(wire_api: []const u8) WireApi {
     if (std.mem.eql(u8, wire_api, "responses")) return .responses;
     return .chat_completions;
+}
+
+fn bodyLooksLikeSse(body: []const u8) bool {
+    const trimmed = std.mem.trimLeft(u8, body, " \t\r\n");
+    return std.mem.startsWith(u8, trimmed, "data:") or std.mem.startsWith(u8, trimmed, "event:");
+}
+
+fn looksLikeCompactionSummary(content: ?[]const u8) bool {
+    const text = content orelse return false;
+    const trimmed = std.mem.trimLeft(u8, text, " \t\r\n");
+    return std.mem.startsWith(u8, trimmed, "CONTEXT_COMPACTION_SUMMARY_V1");
+}
+
+fn parseCompatBody(a: std.mem.Allocator, body: []const u8, response: *CompletionResponse) !void {
+    parseResponsesBody(a, body, response) catch |err| switch (err) {
+        error.InvalidJson => {
+            try parseChatCompletionsBody(a, body, response);
+            return;
+        },
+        else => return err,
+    };
+
+    if (response.content == null and (response.tool_calls == null or response.tool_calls.?.len == 0)) {
+        parseChatCompletionsBody(a, body, response) catch |err| switch (err) {
+            error.InvalidJson => {},
+            else => return err,
+        };
+    }
+}
+
+fn collectChatCompletionsPayload(
+    a: std.mem.Allocator,
+    value: std.json.Value,
+    content_buf: *std.ArrayList(u8),
+    callback: ?StreamCallback,
+) !bool {
+    if (value != .object) return false;
+    const choices = value.object.get("choices") orelse return false;
+    if (choices != .array or choices.array.items.len == 0) return false;
+
+    const choice = choices.array.items[0];
+    if (choice != .object) return false;
+
+    if (choice.object.get("delta")) |delta_val| {
+        if (delta_val != .object) return true;
+        if (delta_val.object.get("content")) |content_val| {
+            if (content_val == .string and content_val.string.len > 0) {
+                try content_buf.appendSlice(a, content_val.string);
+                if (callback) |cb| cb.on_delta(cb.ctx, content_val.string, false);
+            }
+        }
+        return true;
+    }
+
+    if (choice.object.get("message")) |message_val| {
+        if (message_val != .object) return true;
+        if (message_val.object.get("content")) |content_val| {
+            if (content_val == .string and content_val.string.len > 0) {
+                try content_buf.appendSlice(a, content_val.string);
+                if (callback) |cb| cb.on_delta(cb.ctx, content_val.string, false);
+            }
+        }
+        return true;
+    }
+
+    return true;
 }
 
 fn buildChatCompletionsRequestBody(a: std.mem.Allocator, request: CompletionRequest, stream: bool) ![]const u8 {
@@ -538,6 +634,9 @@ test "OpenAICompatClient init and providerName" {
 }
 
 test "buildResponsesRequestBody encodes message history and tools" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
     const request = CompletionRequest{
         .model = "gpt-5.4",
         .messages = &.{
@@ -555,10 +654,9 @@ test "buildResponsesRequestBody encodes message history and tools" {
         },
     };
 
-    const body = try buildResponsesRequestBody(std.testing.allocator, request);
-    defer std.testing.allocator.free(body);
+    const body = try buildResponsesRequestBody(arena.allocator(), request);
 
-    var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, body, .{});
+    var parsed = try std.json.parseFromSlice(std.json.Value, arena.allocator(), body, .{});
     defer parsed.deinit();
 
     const root = parsed.value.object;
@@ -619,9 +717,7 @@ test "collectResponsesItem does not duplicate streamed text" {
     var tool_calls = std.ArrayList(interface.ToolCall){};
     defer tool_calls.deinit(std.testing.allocator);
 
-    var parsed = try std.json.parseFromSlice(
-        std.json.Value,
-        std.testing.allocator,
+    var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator,
         \\{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}
     , .{});
     defer parsed.deinit();
@@ -650,6 +746,58 @@ test "parseResponsesBody leaves empty response empty" {
     try parseResponsesBody(response.arena.allocator(), body, &response);
     try std.testing.expect(response.content == null);
     try std.testing.expect(response.tool_calls == null);
+}
+
+test "parseCompatBody accepts chat completions payload" {
+    var response = CompletionResponse{
+        .arena = std.heap.ArenaAllocator.init(std.testing.allocator),
+    };
+    defer response.deinit();
+
+    const body =
+        \\{
+        \\  "choices": [
+        \\    {
+        \\      "message": {
+        \\        "role": "assistant",
+        \\        "content": "hello"
+        \\      }
+        \\    }
+        \\  ],
+        \\  "usage": {
+        \\    "prompt_tokens": 4,
+        \\    "completion_tokens": 2,
+        \\    "total_tokens": 6
+        \\  }
+        \\}
+    ;
+
+    try parseCompatBody(response.arena.allocator(), body, &response);
+    try std.testing.expectEqualStrings("hello", response.content.?);
+    try std.testing.expectEqual(@as(u32, 4), response.usage.prompt_tokens);
+    try std.testing.expectEqual(@as(u32, 2), response.usage.completion_tokens);
+    try std.testing.expectEqual(@as(u32, 6), response.usage.total_tokens);
+}
+
+test "collectChatCompletionsPayload extracts streaming delta content" {
+    var content_buf = std.ArrayList(u8){};
+    defer content_buf.deinit(std.testing.allocator);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator,
+        \\{"choices":[{"delta":{"content":"hel"}}]}
+    , .{});
+    defer parsed.deinit();
+
+    try std.testing.expect(try collectChatCompletionsPayload(std.testing.allocator, parsed.value, &content_buf, null));
+    try std.testing.expectEqualStrings("hel", content_buf.items);
+}
+
+test "looksLikeCompactionSummary detects relay summary output" {
+    try std.testing.expect(looksLikeCompactionSummary(
+        \\CONTEXT_COMPACTION_SUMMARY_V1
+        \\{"goals":["test"]}
+    ));
+    try std.testing.expect(!looksLikeCompactionSummary("hello"));
 }
 
 test "responses smoke test" {

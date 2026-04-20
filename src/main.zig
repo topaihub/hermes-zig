@@ -66,7 +66,7 @@ fn renderChatErrorMessage(allocator: std.mem.Allocator, err_name: []const u8) ![
     if (std.mem.eql(u8, err_name, "ResponsesEmptyOutput")) {
         return std.fmt.allocPrint(
             allocator,
-            "Provider returned a completed responses payload with empty output. This usually means the selected gateway does not fully support responses for the current model.",
+            "Provider returned no usable output for the selected protocol. The relay may not fully support this model or wire format.",
             .{},
         );
     }
@@ -82,16 +82,18 @@ fn renderChatErrorMessage(allocator: std.mem.Allocator, err_name: []const u8) ![
 
 fn resolveConfigPathAlloc(allocator: std.mem.Allocator) ![]u8 {
     const exe_config = try exeRelativePathAlloc(allocator, config_filename);
-    errdefer allocator.free(exe_config);
+    defer allocator.free(exe_config);
+    return chooseConfigPathAlloc(allocator, exe_config, config_filename);
+}
 
-    if (pathExists(exe_config)) {
-        return exe_config;
-    }
-    if (pathExists(config_filename)) {
-        allocator.free(exe_config);
-        return allocator.dupe(u8, config_filename);
-    }
-    return exe_config;
+fn chooseConfigPathAlloc(
+    allocator: std.mem.Allocator,
+    preferred_path: []const u8,
+    fallback_path: []const u8,
+) ![]u8 {
+    if (pathExists(preferred_path)) return allocator.dupe(u8, preferred_path);
+    if (pathExists(fallback_path)) return allocator.dupe(u8, fallback_path);
+    return allocator.dupe(u8, preferred_path);
 }
 
 fn configBaseDirAlloc(allocator: std.mem.Allocator, config_path: []const u8) ![]u8 {
@@ -144,6 +146,98 @@ fn saveConfigAlloc(allocator: std.mem.Allocator, config_path: []const u8, cfg: c
     var file = try createConfigFile(config_path);
     defer file.close();
     try file.writeAll(json);
+}
+
+fn clearLoadedConfig(loaded_cfg: *?core.LoadedConfig) void {
+    if (loaded_cfg.*) |*loaded| {
+        loaded.deinit();
+        loaded_cfg.* = null;
+    }
+}
+
+fn clearResolvedProvider(allocator: std.mem.Allocator, resolved_provider: *?llm.ResolvedProvider) void {
+    if (resolved_provider.*) |provider| {
+        provider.deinit(allocator);
+        resolved_provider.* = null;
+    }
+}
+
+fn clearModelOverride(allocator: std.mem.Allocator, owned_model_override: *?[]u8) void {
+    if (owned_model_override.*) |model_name| {
+        allocator.free(model_name);
+        owned_model_override.* = null;
+    }
+}
+
+const RuntimeReloadState = struct {
+    loaded_cfg: core.LoadedConfig,
+    resolved_provider: ?llm.ResolvedProvider,
+    tools_runtime: interface.cli.ToolsRuntime,
+
+    fn deinit(self: *RuntimeReloadState, allocator: std.mem.Allocator) void {
+        self.tools_runtime.deinit();
+        clearResolvedProvider(allocator, &self.resolved_provider);
+        self.loaded_cfg.deinit();
+    }
+};
+
+fn loadRuntimeState(
+    allocator: std.mem.Allocator,
+    config_path: []const u8,
+    http: framework.HttpClient,
+) !RuntimeReloadState {
+    var new_loaded_cfg = try core.config_loader.loadFromFile(config_path, allocator);
+    errdefer new_loaded_cfg.deinit();
+
+    const new_cfg = new_loaded_cfg.parsed.value;
+    var new_resolved_provider = try llm.runtime_provider.resolveProvider(allocator, &new_cfg, http);
+    errdefer clearResolvedProvider(allocator, &new_resolved_provider);
+
+    var new_tools_runtime = try interface.cli.ToolsRuntime.init(allocator, &new_cfg);
+    errdefer new_tools_runtime.deinit();
+
+    return .{
+        .loaded_cfg = new_loaded_cfg,
+        .resolved_provider = new_resolved_provider,
+        .tools_runtime = new_tools_runtime,
+    };
+}
+
+fn reloadRuntimeState(
+    allocator: std.mem.Allocator,
+    config_path: []const u8,
+    cfg: *core.Config,
+    loaded_cfg: *?core.LoadedConfig,
+    resolved_provider: *?llm.ResolvedProvider,
+    tools_runtime: *interface.cli.ToolsRuntime,
+    owned_model_override: *?[]u8,
+    http: framework.HttpClient,
+) !void {
+    const new_state = try loadRuntimeState(allocator, config_path, http);
+
+    const old_loaded_cfg = loaded_cfg.*;
+    const old_resolved_provider = resolved_provider.*;
+    const old_tools_runtime = tools_runtime.*;
+
+    loaded_cfg.* = new_state.loaded_cfg;
+    resolved_provider.* = new_state.resolved_provider;
+    tools_runtime.* = new_state.tools_runtime;
+    cfg.* = loaded_cfg.*.?.parsed.value;
+
+    clearModelOverride(allocator, owned_model_override);
+    if (old_loaded_cfg) |loaded| {
+        var loaded_mut = loaded;
+        loaded_mut.deinit();
+    }
+    if (old_resolved_provider) |provider| provider.deinit(allocator);
+    var old_tools_runtime_mut = old_tools_runtime;
+    old_tools_runtime_mut.deinit();
+}
+
+fn printLoadedConfigSummary(allocator: std.mem.Allocator, stdout: std.fs.File, cfg: *const core.Config) !void {
+    try writeF(stdout, allocator, "  Provider: \x1b[32m{s}\x1b[0m\n", .{cfg.provider});
+    try writeF(stdout, allocator, "  Model:    \x1b[32m{s}\x1b[0m\n", .{cfg.model});
+    try stdout.writeAll("\n");
 }
 
 fn ensureUtf8BomFile(path: []const u8) !void {
@@ -222,32 +316,58 @@ pub fn main() !void {
 
     const default_config = @embedFile("default_config.json");
     var loaded_cfg: ?core.LoadedConfig = null;
-    defer if (loaded_cfg) |*loaded| loaded.deinit();
+    defer clearLoadedConfig(&loaded_cfg);
+
+    var cfg = core.Config{};
+    var tools_runtime = try interface.cli.ToolsRuntime.init(allocator, &cfg);
+    defer tools_runtime.deinit();
+
+    var native_http = framework.NativeHttpClient.init(null);
+    var resolved_provider: ?llm.ResolvedProvider = null;
+    defer clearResolvedProvider(allocator, &resolved_provider);
+
+    var owned_model_override: ?[]u8 = null;
+    defer clearModelOverride(allocator, &owned_model_override);
 
     // Try to load existing config
-    var cfg = blk: {
-        loaded_cfg = core.config_loader.loadFromFile(config_path, allocator) catch |err| {
-            if (err == error.FileNotFound) {
-                // Generate default config.json
-                var df = createConfigFile(config_path) catch {
-                    break :blk core.Config{};
-                };
-                defer df.close();
-                df.writeAll(default_config) catch {};
-                try stdout.writeAll("  Generated default config.json\n");
-                try stdout.writeAll("  Starting setup wizard...\n\n");
-                try runSetupWizard(allocator, stdout, stdin, config_path);
-                break :blk core.Config{};
-            }
+    if (pathExists(config_path)) {
+        reloadRuntimeState(
+            allocator,
+            config_path,
+            &cfg,
+            &loaded_cfg,
+            &resolved_provider,
+            &tools_runtime,
+            &owned_model_override,
+            native_http.client(),
+        ) catch |err| {
             try writeF(stdout, allocator, "  Config error: {s}\n", .{@errorName(err)});
-            break :blk core.Config{};
         };
-        try writeF(stdout, allocator, "  Provider: \x1b[32m{s}\x1b[0m\n", .{loaded_cfg.?.parsed.value.provider});
-        try writeF(stdout, allocator, "  Model:    \x1b[32m{s}\x1b[0m\n", .{loaded_cfg.?.parsed.value.model});
-        try stdout.writeAll("\n");
-        break :blk loaded_cfg.?.parsed.value;
-    };
-    _ = &cfg;
+        if (loaded_cfg != null) {
+            try printLoadedConfigSummary(allocator, stdout, &cfg);
+        }
+    } else {
+        // Generate default config.json
+        var df = createConfigFile(config_path) catch null;
+        if (df) |*file| {
+            defer file.close();
+            file.writeAll(default_config) catch {};
+            try stdout.writeAll("  Generated default config.json\n");
+            try stdout.writeAll("  Starting setup wizard...\n\n");
+            try runSetupWizard(allocator, stdout, stdin, config_path);
+            try reloadRuntimeState(
+                allocator,
+                config_path,
+                &cfg,
+                &loaded_cfg,
+                &resolved_provider,
+                &tools_runtime,
+                &owned_model_override,
+                native_http.client(),
+            );
+            try printLoadedConfigSummary(allocator, stdout, &cfg);
+        }
+    }
 
     var app_ctx = try framework.AppContext.init(allocator, .{
         .log_level = .debug,
@@ -322,20 +442,10 @@ pub fn main() !void {
 
     try stdout.writeAll("  Config UI: \x1b[36mhttp://127.0.0.1:8318\x1b[0m\n\n");
 
-    // Resolve LLM provider
-    var native_http = framework.NativeHttpClient.init(null);
-    var resolved_provider = try llm.runtime_provider.resolveProvider(allocator, &cfg, native_http.client());
-    defer if (resolved_provider) |provider| provider.deinit(allocator);
-
-    var tools_runtime = try interface.cli.ToolsRuntime.init(allocator, &cfg);
-    defer tools_runtime.deinit();
-
     var skills_runtime = try interface.cli.SkillsRuntime.init(allocator);
     defer skills_runtime.deinit();
     skills_runtime.reload() catch {};
     var session_usage = core.TokenUsage{};
-    var owned_model_override: ?[]u8 = null;
-    defer if (owned_model_override) |model_name| allocator.free(model_name);
 
     // Load soul for system prompt
     const hermes_home = try core.soul.getHermesHome(allocator);
@@ -397,10 +507,13 @@ pub fn main() !void {
                 stdin,
                 config_path,
                 &cfg,
+                &loaded_cfg,
+                &resolved_provider,
                 &owned_model_override,
                 &skills_runtime,
                 &tools_runtime,
                 &session_usage,
+                native_http.client(),
             ) catch |err| {
                 framework.observability.request_trace.complete(app_ctx.logger, &request_trace, 500, @errorName(err));
                 return err;
@@ -488,10 +601,13 @@ fn handleCommand(
     stdin: std.fs.File,
     config_path: []const u8,
     cfg: *core.Config,
+    loaded_cfg: *?core.LoadedConfig,
+    resolved_provider: *?llm.ResolvedProvider,
     owned_model_override: *?[]u8,
     skills_runtime: *interface.cli.SkillsRuntime,
     tools_runtime: *interface.cli.ToolsRuntime,
     session_usage: *core.TokenUsage,
+    http: framework.HttpClient,
 ) !CommandAction {
     const parsed = interface.cli.parseCommand(input) orelse return .continue_session;
 
@@ -499,6 +615,17 @@ fn handleCommand(
         .quit => return .quit,
         .setup => {
             try runSetupWizard(allocator, stdout, stdin, config_path);
+            try reloadRuntimeState(
+                allocator,
+                config_path,
+                cfg,
+                loaded_cfg,
+                resolved_provider,
+                tools_runtime,
+                owned_model_override,
+                http,
+            );
+            try printLoadedConfigSummary(allocator, stdout, cfg);
             return .continue_session;
         },
         .config => {
@@ -765,28 +892,90 @@ fn buildSetupConfigJson(
     api_base_url: []const u8,
     wire_api: []const u8,
 ) ![]u8 {
-    return std.fmt.allocPrint(allocator,
-        \\{{
-        \\  "provider": "{s}",
-        \\  "model": "{s}",
-        \\  "api_key": "{s}",
-        \\  "api_base_url": "{s}",
-        \\  "wire_api": "{s}",
-        \\  "temperature": 0.7,
-        \\  "terminal": {{
-        \\    "backend": "local",
-        \\    "timeout_ms": 30000
-        \\  }},
-        \\  "memory": {{
-        \\    "enabled": true,
-        \\    "nudge_interval": 10
-        \\  }},
-        \\  "security": {{
-        \\    "command_approval": true,
-        \\    "injection_scanning": true
-        \\  }}
-        \\}}
-    , .{ provider, model, api_key, api_base_url, wire_api });
+    const default_config = @embedFile("default_config.json");
+    var loaded = try core.config_loader.loadFromString(default_config, allocator);
+    defer loaded.deinit();
+
+    var cfg = loaded.parsed.value;
+    const setup_models = try buildSetupModels(allocator, provider, model);
+    defer freeOwnedStringSlice(allocator, setup_models);
+
+    cfg.provider = try allocator.dupe(u8, provider);
+    defer allocator.free(cfg.provider);
+    cfg.model = try allocator.dupe(u8, model);
+    defer allocator.free(cfg.model);
+    cfg.api_key = try allocator.dupe(u8, api_key);
+    defer allocator.free(cfg.api_key);
+    cfg.api_base_url = try allocator.dupe(u8, api_base_url);
+    defer allocator.free(cfg.api_base_url);
+    cfg.wire_api = try allocator.dupe(u8, wire_api);
+    defer allocator.free(cfg.wire_api);
+    cfg.models = setup_models;
+
+    return std.json.Stringify.valueAlloc(allocator, cfg, .{ .whitespace = .indent_2 });
+}
+
+fn buildSetupModels(
+    allocator: std.mem.Allocator,
+    provider: []const u8,
+    selected_model: []const u8,
+) ![][]u8 {
+    const candidates = if (std.mem.eql(u8, provider, "openrouter"))
+        &[_][]const u8{
+            selected_model,
+            "openrouter/nous-hermes",
+            "openrouter/anthropic/claude-sonnet-4",
+            "openrouter/openai/gpt-4o",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "claude-sonnet-4-20250514",
+            "claude-haiku-3.5",
+            "gemini-2.5-pro",
+        }
+    else if (std.mem.eql(u8, provider, "anthropic"))
+        &[_][]const u8{
+            selected_model,
+            "claude-sonnet-4-20250514",
+            "claude-haiku-3.5",
+        }
+    else if (std.mem.eql(u8, provider, "nous"))
+        &[_][]const u8{
+            selected_model,
+            "nous/hermes-3-llama-3.1-405b",
+        }
+    else
+        &[_][]const u8{
+            selected_model,
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-5.4",
+            "gpt-5.3-codex",
+        };
+
+    var models = std.ArrayList([]u8){};
+    errdefer {
+        for (models.items) |item| allocator.free(item);
+        models.deinit(allocator);
+    }
+
+    for (candidates) |candidate| {
+        var exists = false;
+        for (models.items) |existing| {
+            if (std.mem.eql(u8, existing, candidate)) {
+                exists = true;
+                break;
+            }
+        }
+        if (exists) continue;
+        try models.append(allocator, try allocator.dupe(u8, candidate));
+    }
+
+    return models.toOwnedSlice(allocator);
+}
+
+fn freeOwnedStringSlice(allocator: std.mem.Allocator, items: [][]u8) void {
+    for (items) |item| allocator.free(item);
+    allocator.free(items);
 }
 
 fn usesTextLogFormat(log_format: []const u8) bool {
@@ -878,7 +1067,7 @@ test "Empty JSON uses all defaults" {
     try std.testing.expect(loaded.parsed.value.temperature == 0.7);
 }
 
-test "setup config json includes api_base_url" {
+test "setup config json preserves runtime defaults needed by model and tools" {
     const json = try buildSetupConfigJson(
         std.testing.allocator,
         "custom",
@@ -895,6 +1084,184 @@ test "setup config json includes api_base_url" {
     try std.testing.expectEqualStrings("custom", loaded.parsed.value.provider);
     try std.testing.expectEqualStrings("https://api.example.com/v1", loaded.parsed.value.api_base_url);
     try std.testing.expectEqualStrings("responses", loaded.parsed.value.wire_api);
+    try std.testing.expect(loaded.parsed.value.models.len >= 1);
+    try std.testing.expectEqualStrings("gpt-5.4", loaded.parsed.value.models[0]);
+    try std.testing.expectEqual(@as(usize, 1), loaded.parsed.value.tools.enabled_toolsets.len);
+    try std.testing.expectEqualStrings("default", loaded.parsed.value.tools.enabled_toolsets[0]);
+}
+
+test "chooseConfigPathAlloc prefers executable config over cwd fallback" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_dir_rel = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", tmp.sub_path[0..] });
+    defer std.testing.allocator.free(tmp_dir_rel);
+    const tmp_dir_abs = try std.fs.cwd().realpathAlloc(std.testing.allocator, tmp_dir_rel);
+    defer std.testing.allocator.free(tmp_dir_abs);
+
+    const exe_config = try std.fs.path.join(std.testing.allocator, &.{ tmp_dir_abs, "exe-config.json" });
+    defer std.testing.allocator.free(exe_config);
+    const cwd_config = try std.fs.path.join(std.testing.allocator, &.{ tmp_dir_abs, "cwd-config.json" });
+    defer std.testing.allocator.free(cwd_config);
+
+    try std.fs.cwd().writeFile(.{ .sub_path = exe_config, .data = "{}" });
+    try std.fs.cwd().writeFile(.{ .sub_path = cwd_config, .data = "{}" });
+
+    const chosen = try chooseConfigPathAlloc(std.testing.allocator, exe_config, cwd_config);
+    defer std.testing.allocator.free(chosen);
+    try std.testing.expectEqualStrings(exe_config, chosen);
+}
+
+test "reloadRuntimeState refreshes config, provider, and tools runtime" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_dir_rel = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", tmp.sub_path[0..] });
+    defer std.testing.allocator.free(tmp_dir_rel);
+    const tmp_dir_abs = try std.fs.cwd().realpathAlloc(std.testing.allocator, tmp_dir_rel);
+    defer std.testing.allocator.free(tmp_dir_abs);
+    const config_path = try std.fs.path.join(std.testing.allocator, &.{ tmp_dir_abs, "config.json" });
+    defer std.testing.allocator.free(config_path);
+
+    const config_json =
+        \\{
+        \\  "provider": "custom",
+        \\  "model": "gpt-5.4",
+        \\  "api_key": "sk-test",
+        \\  "api_base_url": "https://api.example.com/v1",
+        \\  "wire_api": "responses",
+        \\  "models": ["gpt-5.4", "gpt-5.3-codex"],
+        \\  "tools": {
+        \\    "enabled_toolsets": ["default"],
+        \\    "disabled_tools": ["todo"]
+        \\  }
+        \\}
+    ;
+    try std.fs.cwd().writeFile(.{ .sub_path = config_path, .data = config_json });
+
+    var cfg = core.Config{};
+    var tools_runtime = try interface.cli.ToolsRuntime.init(std.testing.allocator, &cfg);
+    defer tools_runtime.deinit();
+    var loaded_cfg: ?core.LoadedConfig = null;
+    defer clearLoadedConfig(&loaded_cfg);
+    var resolved_provider: ?llm.ResolvedProvider = null;
+    defer clearResolvedProvider(std.testing.allocator, &resolved_provider);
+    var owned_model_override: ?[]u8 = null;
+    defer clearModelOverride(std.testing.allocator, &owned_model_override);
+    const Mock = struct {
+        fn mockSend(_: std.mem.Allocator, _: framework.HttpRequest) !framework.HttpResponse {
+            unreachable;
+        }
+    };
+    var native = framework.NativeHttpClient.init(Mock.mockSend);
+
+    try reloadRuntimeState(
+        std.testing.allocator,
+        config_path,
+        &cfg,
+        &loaded_cfg,
+        &resolved_provider,
+        &tools_runtime,
+        &owned_model_override,
+        native.client(),
+    );
+
+    try std.testing.expectEqualStrings("custom", cfg.provider);
+    try std.testing.expectEqualStrings("gpt-5.4", cfg.model);
+    try std.testing.expect(resolved_provider != null);
+    const states = try tools_runtime.listStates(std.testing.allocator, &cfg);
+    defer std.testing.allocator.free(states);
+    var saw_disabled_todo = false;
+    for (states) |state| {
+        if (std.mem.eql(u8, state.name, "todo")) {
+            saw_disabled_todo = true;
+            try std.testing.expect(!state.enabled);
+        }
+    }
+    try std.testing.expect(saw_disabled_todo);
+}
+
+test "reloadRuntimeState preserves previous state when new config is invalid" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_dir_rel = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", tmp.sub_path[0..] });
+    defer std.testing.allocator.free(tmp_dir_rel);
+    const tmp_dir_abs = try std.fs.cwd().realpathAlloc(std.testing.allocator, tmp_dir_rel);
+    defer std.testing.allocator.free(tmp_dir_abs);
+    const config_path = try std.fs.path.join(std.testing.allocator, &.{ tmp_dir_abs, "config.json" });
+    defer std.testing.allocator.free(config_path);
+
+    const valid_config =
+        \\{
+        \\  "provider": "custom",
+        \\  "model": "gpt-5.4",
+        \\  "api_key": "sk-test",
+        \\  "api_base_url": "https://api.example.com/v1",
+        \\  "wire_api": "responses",
+        \\  "models": ["gpt-5.4"],
+        \\  "tools": {
+        \\    "enabled_toolsets": ["default"],
+        \\    "disabled_tools": ["todo"]
+        \\  }
+        \\}
+    ;
+    try std.fs.cwd().writeFile(.{ .sub_path = config_path, .data = valid_config });
+
+    var cfg = core.Config{};
+    var tools_runtime = try interface.cli.ToolsRuntime.init(std.testing.allocator, &cfg);
+    defer tools_runtime.deinit();
+    var loaded_cfg: ?core.LoadedConfig = null;
+    defer clearLoadedConfig(&loaded_cfg);
+    var resolved_provider: ?llm.ResolvedProvider = null;
+    defer clearResolvedProvider(std.testing.allocator, &resolved_provider);
+    var owned_model_override: ?[]u8 = null;
+    defer clearModelOverride(std.testing.allocator, &owned_model_override);
+    const Mock = struct {
+        fn mockSend(_: std.mem.Allocator, _: framework.HttpRequest) !framework.HttpResponse {
+            unreachable;
+        }
+    };
+    var native = framework.NativeHttpClient.init(Mock.mockSend);
+
+    try reloadRuntimeState(
+        std.testing.allocator,
+        config_path,
+        &cfg,
+        &loaded_cfg,
+        &resolved_provider,
+        &tools_runtime,
+        &owned_model_override,
+        native.client(),
+    );
+
+    try std.fs.cwd().writeFile(.{ .sub_path = config_path, .data = "{ invalid json" });
+    try std.testing.expectError(
+        error.SyntaxError,
+        reloadRuntimeState(
+            std.testing.allocator,
+            config_path,
+            &cfg,
+            &loaded_cfg,
+            &resolved_provider,
+            &tools_runtime,
+            &owned_model_override,
+            native.client(),
+        ),
+    );
+
+    try std.testing.expectEqualStrings("custom", cfg.provider);
+    try std.testing.expectEqualStrings("gpt-5.4", cfg.model);
+    try std.testing.expect(resolved_provider != null);
+    const states = try tools_runtime.listStates(std.testing.allocator, &cfg);
+    defer std.testing.allocator.free(states);
+    for (states) |state| {
+        if (std.mem.eql(u8, state.name, "todo")) {
+            try std.testing.expect(!state.enabled);
+            return;
+        }
+    }
+    return error.TestUnexpectedResult;
 }
 
 test "isConfiguredModelAllowed matches configured list" {
@@ -920,7 +1287,7 @@ test "saveConfigAlloc writes configured model list" {
     const cfg = core.Config{
         .provider = "custom",
         .model = "gpt-5.4",
-        .models = &.{ "gpt-5.4" },
+        .models = &.{"gpt-5.4"},
         .api_base_url = "https://example.com",
         .wire_api = "responses",
     };
@@ -978,7 +1345,7 @@ test "switchModel rejects invalid model without mutating config" {
 
     var cfg = core.Config{
         .model = "gpt-5.4",
-        .models = &.{ "gpt-5.4" },
+        .models = &.{"gpt-5.4"},
     };
     var owned_model_override: ?[]u8 = null;
     defer if (owned_model_override) |m| std.testing.allocator.free(m);
@@ -991,7 +1358,7 @@ test "switchModel rejects invalid model without mutating config" {
 test "renderChatErrorMessage expands responses empty output" {
     const msg = try renderChatErrorMessage(std.testing.allocator, "ResponsesEmptyOutput");
     defer std.testing.allocator.free(msg);
-    try std.testing.expect(std.mem.indexOf(u8, msg, "gateway does not fully support responses") != null);
+    try std.testing.expect(std.mem.indexOf(u8, msg, "no usable output") != null);
 }
 
 test "Soul loading returns default when file doesn't exist" {
