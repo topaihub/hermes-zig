@@ -7,13 +7,17 @@ pub const PluginConfig = struct {
 
 pub const PluginManager = struct {
     plugins: std.ArrayList(PluginConfig),
+    allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) PluginManager {
-        return .{ .plugins = std.ArrayList(PluginConfig).init(allocator) };
+        return .{ .plugins = .{}, .allocator = allocator };
     }
 
     pub fn deinit(self: *PluginManager) void {
-        self.plugins.deinit();
+        for (self.plugins.items) |plugin| {
+            self.allocator.free(plugin.name);
+        }
+        self.plugins.deinit(self.allocator);
     }
 
     pub fn scan(self: *PluginManager, dir_path: []const u8) !void {
@@ -22,7 +26,9 @@ pub const PluginManager = struct {
         var iter = dir.iterate();
         while (try iter.next()) |entry| {
             if (entry.kind == .directory) {
-                try self.plugins.append(.{ .name = entry.name });
+                const name = try self.allocator.dupe(u8, entry.name);
+                errdefer self.allocator.free(name);
+                try self.plugins.append(self.allocator, .{ .name = name });
             }
         }
     }

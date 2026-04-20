@@ -3,10 +3,17 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
 pub fn saveClipboardImage(allocator: Allocator, dest: []const u8) !bool {
+    const windows_script: ?[]u8 = if (builtin.os.tag == .windows) blk: {
+        const escaped_dest = try std.mem.replaceOwned(u8, allocator, dest, "'", "''");
+        defer allocator.free(escaped_dest);
+        break :blk try std.fmt.allocPrint(allocator, "Get-Clipboard -Format Image | ForEach-Object {{ $_.Save('{s}') }}", .{escaped_dest});
+    } else null;
+    defer if (windows_script) |script| allocator.free(script);
+
     const argv: []const []const u8 = switch (builtin.os.tag) {
         .macos => &.{ "pngpaste", dest },
         .linux => &.{ "xclip", "-selection", "clipboard", "-t", "image/png", "-o" },
-        .windows => &.{ "powershell", "-c", "Get-Clipboard -Format Image | ForEach-Object { $_.Save('" ++ dest ++ "') }" },
+        .windows => &.{ "powershell", "-c", windows_script.? },
         else => return false,
     };
 
@@ -20,7 +27,7 @@ pub fn saveClipboardImage(allocator: Allocator, dest: []const u8) !bool {
     if (builtin.os.tag == .linux) {
         // For linux, xclip outputs to stdout; write to dest file
         if (child.stdout) |out| {
-            const data = out.reader().readAllAlloc(allocator, 10 * 1024 * 1024) catch return false;
+            const data = out.readToEndAlloc(allocator, 10 * 1024 * 1024) catch return false;
             defer allocator.free(data);
             if (data.len == 0) return false;
             var f = std.fs.cwd().createFile(dest, .{}) catch return false;
