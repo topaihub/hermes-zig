@@ -15,8 +15,8 @@ pub const MixtureOfAgentsTool = struct {
         _ = self;
         const prompt = tools_interface.getString(args, "prompt") orelse return .{ .output = "missing prompt", .is_error = true };
 
-        var model_list = std.ArrayList(u8).init(allocator);
-        defer model_list.deinit();
+        var model_list = std.ArrayList(u8){};
+        defer model_list.deinit(allocator);
 
         if (args.get("models")) |models_val| {
             switch (models_val) {
@@ -24,8 +24,8 @@ pub const MixtureOfAgentsTool = struct {
                     for (arr.items, 0..) |item, i| {
                         switch (item) {
                             .string => |s| {
-                                if (i > 0) model_list.appendSlice(", ") catch {};
-                                model_list.appendSlice(s) catch {};
+                                if (i > 0) model_list.appendSlice(allocator, ", ") catch {};
+                                model_list.appendSlice(allocator, s) catch {};
                             },
                             else => {},
                         }

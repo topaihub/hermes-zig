@@ -20,8 +20,7 @@ pub const SessionManager = struct {
     pub fn createSession(self: *SessionManager, allocator: std.mem.Allocator, cwd: []const u8) !SessionState {
         var id_buf: [16]u8 = undefined;
         std.crypto.random.bytes(&id_buf);
-        var hex: [32]u8 = undefined;
-        _ = std.fmt.bufPrint(&hex, "{}", .{std.fmt.fmtSliceHexLower(&id_buf)}) catch unreachable;
+        const hex = std.fmt.bytesToHex(id_buf, .lower);
         const id = try allocator.dupe(u8, &hex);
         const cwd_owned = try allocator.dupe(u8, cwd);
         const state = SessionState{ .id = id, .cwd = cwd_owned, .created_at = std.time.timestamp() };

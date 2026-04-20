@@ -18,5 +18,5 @@ test "renderBanner writes output" {
     var fbs = std.io.fixedBufferStream(&buf);
     try renderBanner(fbs.writer());
     try std.testing.expect(fbs.getWritten().len > 0);
-    try std.testing.expect(std.mem.indexOf(u8, fbs.getWritten(), "Hermes") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fbs.getWritten(), "| |_| |") != null);
 }

@@ -61,11 +61,11 @@ Or open `http://127.0.0.1:8318` in your browser for the web-based config UI.
 
 | OS | Path |
 |----|------|
-| Linux | `./config.json` (current directory) or `~/.hermes/config.json` |
-| macOS | `./config.json` (current directory) or `~/.hermes/config.json` |
-| Windows | `.\config.json` (current directory) or `%USERPROFILE%\.hermes\config.json` |
+| Linux | `<directory of hermes-zig>/config.json`, then `./config.json` |
+| macOS | `<directory of hermes-zig>/config.json`, then `./config.json` |
+| Windows | `<directory of hermes-zig>\\config.json`, then `.\config.json` |
 
-hermes-zig looks for `config.json` in the **current working directory** first. If not found, it starts the setup wizard.
+hermes-zig looks for `config.json` next to the executable first. If not found, it falls back to the current working directory. If neither exists, it starts the setup wizard and writes the resulting config next to the executable.
 
 A full example is provided in [`config.example.json`](config.example.json). Copy it to get started:
 

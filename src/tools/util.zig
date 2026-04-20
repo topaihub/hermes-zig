@@ -9,8 +9,8 @@ pub const Hunk = struct {
 };
 
 pub fn stripAnsi(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
-    var result = std.ArrayList(u8).init(allocator);
-    errdefer result.deinit();
+    var result = std.ArrayList(u8){};
+    errdefer result.deinit(allocator);
     var i: usize = 0;
     while (i < input.len) {
         if (input[i] == 0x1b and i + 1 < input.len and input[i + 1] == '[') {
@@ -18,11 +18,11 @@ pub fn stripAnsi(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
             while (i < input.len and input[i] != 'm') : (i += 1) {}
             if (i < input.len) i += 1;
         } else {
-            try result.append(input[i]);
+            try result.append(allocator, input[i]);
             i += 1;
         }
     }
-    return result.toOwnedSlice();
+    return result.toOwnedSlice(allocator);
 }
 
 pub fn fuzzyMatch(query: []const u8, candidate: []const u8) f32 {
@@ -41,15 +41,15 @@ fn toLower(c: u8) u8 {
 }
 
 pub fn parsePatch(allocator: std.mem.Allocator, diff: []const u8) ![]Hunk {
-    var hunks = std.ArrayList(Hunk).init(allocator);
-    errdefer hunks.deinit();
+    var hunks = std.ArrayList(Hunk){};
+    errdefer hunks.deinit(allocator);
     var lines = std.mem.splitScalar(u8, diff, '\n');
     while (lines.next()) |line| {
         if (std.mem.startsWith(u8, line, "@@ ")) {
-            try hunks.append(.{ .old_start = 0, .old_count = 0, .new_start = 0, .new_count = 0, .lines = line });
+            try hunks.append(allocator, .{ .old_start = 0, .old_count = 0, .new_start = 0, .new_count = 0, .lines = line });
         }
     }
-    return hunks.toOwnedSlice();
+    return hunks.toOwnedSlice(allocator);
 }
 
 test "stripAnsi removes escape sequences" {

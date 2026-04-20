@@ -9,7 +9,7 @@ pub const ToolRegistry = struct {
     dynamic: std.StringHashMap(ToolHandler),
     lock: std.Thread.RwLock = .{},
 
-    pub fn init(allocator: std.mem.Allocator, comptime static_tools: []const ToolHandler) ToolRegistry {
+    pub fn init(allocator: std.mem.Allocator, static_tools: []const ToolHandler) ToolRegistry {
         return .{
             .static_tools = static_tools,
             .dynamic = std.StringHashMap(ToolHandler).init(allocator),

@@ -8,9 +8,10 @@ pub const ProcessInfo = struct {
     status: ProcessStatus = .running,
     exit_code: ?u32 = null,
     stdout_buffer: std.ArrayList(u8),
+    allocator: std.mem.Allocator,
 
     pub fn deinit(self: *ProcessInfo) void {
-        self.stdout_buffer.deinit();
+        self.stdout_buffer.deinit(self.allocator);
     }
 };
 
@@ -36,7 +37,8 @@ pub const ProcessPool = struct {
             .id = @intCast(self.map.count()),
             .command = command,
             .status = .running,
-            .stdout_buffer = std.ArrayList(u8).init(self.allocator),
+            .stdout_buffer = .{},
+            .allocator = self.allocator,
         });
     }
 
