@@ -12,7 +12,7 @@ pub const WebConfigServer = struct {
     listener: ?net.Server = null,
 
     pub fn start(self: *WebConfigServer) void {
-        var io_threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
+        var io_threaded: std.Io.Threaded = .init_single_threaded;
         const io_instance = io_threaded.io();
         const addr = net.IpAddress.parseIp4("127.0.0.1", self.port) catch return;
         var server = addr.listen(io_instance, .{ .reuse_address = true }) catch return;
@@ -45,12 +45,14 @@ pub const WebConfigServer = struct {
     }
 
     fn handleConnection(self: *WebConfigServer, stream: net.Stream) !void {
+        var io_threaded: std.Io.Threaded = .init_single_threaded;
+        const io_instance = io_threaded.io();
         var read_buf: [8192]u8 = undefined;
         var write_buf: [8192]u8 = undefined;
-        var net_reader = net.Stream.Reader.init(stream, &read_buf);
-        var net_writer = net.Stream.Writer.init(stream, &write_buf);
+        var net_reader = net.Stream.Reader.init(stream, io_instance, &read_buf);
+        var net_writer = net.Stream.Writer.init(stream, io_instance, &write_buf);
 
-        var server = http.Server.init(net_reader.interface(), &net_writer.interface);
+        var server = http.Server.init(&net_reader.interface, &net_writer.interface);
         var req = server.receiveHead() catch return;
 
         const target = req.head.target;
@@ -145,11 +147,17 @@ fn createConfigFile(config_path: []const u8) !std.fs.File {
 
 fn readConfigFileAlloc(allocator: std.mem.Allocator, config_path: []const u8, max_bytes: usize) ![]u8 {
     if (std.fs.path.isAbsolute(config_path)) {
-        const file = try std.fs.openFileAbsolute(config_path, .{});
-        defer file.close();
-        return file.readToEndAlloc(allocator, max_bytes);
+        var io_threaded: std.Io.Threaded = .init_single_threaded;
+        const io_instance = io_threaded.io();
+        const file = try std.Io.Dir.openFileAbsolute(io_instance, config_path, .{});
+        defer file.close(io_instance);
+        var stream_buf: [4096]u8 = undefined;
+        var file_reader = file.readerStreaming(io_instance, &stream_buf);
+        return try file_reader.interface.allocRemaining(allocator, .limited(max_bytes));
     }
-    return std.fs.cwd().readFileAlloc(allocator, config_path, max_bytes);
+    var io_threaded: std.Io.Threaded = .init_single_threaded;
+    const io_instance = io_threaded.io();
+    return std.Io.Dir.cwd().readFileAlloc(io_instance, config_path, allocator, @enumFromInt(max_bytes));
 }
 
 test "WebConfigServer struct init" {

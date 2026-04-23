@@ -384,7 +384,10 @@ pub fn main() !void {
     var tools_runtime = try interface.cli.ToolsRuntime.init(allocator, &cfg);
     defer tools_runtime.deinit();
 
-    var native_http = framework.NativeHttpClient.init(null);
+    var io_threaded: std.Io.Threaded = .init_single_threaded;
+    const io_instance = io_threaded.io();
+
+    var native_http = framework.NativeHttpClient.init(null, io_instance);
     var resolved_provider: ?llm.ResolvedProvider = null;
     defer clearResolvedProvider(allocator, &resolved_provider);
 
@@ -433,7 +436,7 @@ pub fn main() !void {
         }
     }
 
-    var app_ctx = try framework.AppContext.init(allocator, .{
+    var app_ctx = try framework.AppContext.init(allocator, io_instance, .{
         .log_level = .debug,
         .console_log_style = .pretty,
     });
@@ -453,9 +456,6 @@ pub fn main() !void {
     var has_json_file_sink = false;
     defer if (has_json_file_sink) json_file_sink.deinit();
 
-    var io_threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
-    var io_value = io_threaded.io();
-
     if (usesTextLogFormat(cfg.logging.log_format)) {
         const trace_log_dir = try resolvePathFromBaseAlloc(allocator, config_base_dir, cfg.logging.log_dir);
         defer allocator.free(trace_log_dir);
@@ -464,7 +464,6 @@ pub fn main() !void {
         try ensureUtf8BomFile(trace_log_path);
         trace_file_sink = try framework.TraceTextFileSink.init(
             allocator,
-            &io_value,
             trace_log_path,
             cfg.logging.max_file_bytes,
             .{
@@ -481,7 +480,7 @@ pub fn main() !void {
     if (usesJsonLogFormat(cfg.logging.log_format)) {
         const json_log_dir = try resolvePathFromBaseAlloc(allocator, config_base_dir, cfg.logging.log_dir);
         defer allocator.free(json_log_dir);
-        json_file_sink = framework.RotatingFileSink.init(allocator, &io_value, .{
+        json_file_sink = framework.RotatingFileSink.init(allocator, .{
             .log_dir = json_log_dir,
             .prefix = if (usesTextLogFormat(cfg.logging.log_format)) "hermes-json" else "hermes",
             .max_file_bytes = cfg.logging.max_file_bytes,

@@ -16,10 +16,10 @@ pub const SkillDefinition = struct {
 };
 
 pub fn loadSkill(allocator: std.mem.Allocator, path: []const u8) !?SkillDefinition {
-    var io_threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
+    var io_threaded: std.Io.Threaded = .init_single_threaded;
     const io_instance = io_threaded.io();
     const cwd = std.Io.Dir.cwd();
-    const content = cwd.readFileAlloc(io_instance, path, allocator, 1024 * 1024, .unlimited) catch return null;
+    const content = cwd.readFileAlloc(io_instance, path, allocator, @enumFromInt(1024 * 1024)) catch return null;
     defer allocator.free(content);
     return parseSkillContent(allocator, content);
 }
