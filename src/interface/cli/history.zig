@@ -6,12 +6,12 @@ pub const History = struct {
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) History {
-        return .{ .entries = std.ArrayList([]const u8).init(allocator), .allocator = allocator };
+        return .{ .entries = std.ArrayList([]const u8).initCapacity(allocator, 0) catch .empty, .allocator = allocator };
     }
 
     pub fn deinit(self: *History) void {
         for (self.entries.items) |e| self.allocator.free(e);
-        self.entries.deinit();
+        self.entries.deinit(self.allocator);
     }
 
     pub fn add(self: *History, line: []const u8) !void {

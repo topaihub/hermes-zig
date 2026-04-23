@@ -7,6 +7,9 @@ const tui = @import("tui.zig");
 const windows = std.os.windows;
 const kernel32 = windows.kernel32;
 
+extern "kernel32" fn GetConsoleMode(hConsoleHandle: windows.HANDLE, lpMode: *windows.DWORD) callconv(.winapi) windows.BOOL;
+extern "kernel32" fn SetConsoleMode(hConsoleHandle: windows.HANDLE, dwMode: windows.DWORD) callconv(.winapi) windows.BOOL;
+
 const KEY_EVENT: windows.WORD = 0x0001;
 const ENABLE_PROCESSED_INPUT: windows.DWORD = 0x0001;
 const ENABLE_LINE_INPUT: windows.DWORD = 0x0002;
@@ -46,13 +49,13 @@ extern "kernel32" fn ReadConsoleInputW(
     lpNumberOfEventsRead: *windows.DWORD,
 ) callconv(.winapi) windows.BOOL;
 
-pub fn canUseInteractive(stdin: std.fs.File, stdout: std.fs.File) bool {
+pub fn canUseInteractive(stdin: std.Io.File, stdout: std.Io.File) bool {
     if (builtin.os.tag == .windows) {
         var stdin_mode: windows.DWORD = 0;
-        if (kernel32.GetConsoleMode(stdin.handle, &stdin_mode) == 0) return false;
+        if (GetConsoleMode(stdin.handle, &stdin_mode) == .FALSE) return false;
 
         var stdout_mode: windows.DWORD = 0;
-        if (kernel32.GetConsoleMode(stdout.handle, &stdout_mode) == 0) return false;
+        if (GetConsoleMode(stdout.handle, &stdout_mode) == .FALSE) return false;
 
         return stdout.getOrEnableAnsiEscapeSupport();
     }
@@ -62,8 +65,8 @@ pub fn canUseInteractive(stdin: std.fs.File, stdout: std.fs.File) bool {
 
 pub fn readInputLine(
     allocator: std.mem.Allocator,
-    stdin: std.fs.File,
-    stdout: std.fs.File,
+    stdin: std.Io.File,
+    stdout: std.Io.File,
     history: *history_mod.History,
 ) !?[]u8 {
     if (!canUseInteractive(stdin, stdout)) {
@@ -512,8 +515,8 @@ fn truncatedSummary(summary: []const u8) []const u8 {
     return summary[0..max_len];
 }
 
-fn readLineFallback(allocator: std.mem.Allocator, stdin: std.fs.File) !?[]u8 {
-    var out = std.ArrayList(u8){};
+fn readLineFallback(allocator: std.mem.Allocator, stdin: std.Io.File) !?[]u8 {
+    var out = std.ArrayList(u8).empty;
     defer out.deinit(allocator);
 
     var buf: [1]u8 = undefined;

@@ -521,7 +521,7 @@ pub fn main() !void {
     defer allocator.free(soul_text);
 
     // Conversation history
-    var conversation: std.ArrayList(core.Message) = .{};
+    var conversation: std.ArrayList(core.Message) = .empty;
     defer {
         if (conversation.items.len > 1) {
             for (conversation.items[1..]) |msg| {

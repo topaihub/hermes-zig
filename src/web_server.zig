@@ -138,11 +138,10 @@ pub const WebConfigServer = struct {
     }
 };
 
-fn createConfigFile(config_path: []const u8) !std.fs.File {
-    if (std.fs.path.isAbsolute(config_path)) {
-        return std.fs.createFileAbsolute(config_path, .{});
-    }
-    return std.fs.cwd().createFile(config_path, .{});
+fn createConfigFile(config_path: []const u8) !std.Io.File {
+    var io_threaded: std.Io.Threaded = .init_single_threaded;
+    const io_instance = io_threaded.io();
+    return std.Io.Dir.createFileAbsolute(io_instance, config_path, .{});
 }
 
 fn readConfigFileAlloc(allocator: std.mem.Allocator, config_path: []const u8, max_bytes: usize) ![]u8 {
