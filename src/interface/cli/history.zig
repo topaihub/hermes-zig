@@ -6,17 +6,17 @@ pub const History = struct {
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) History {
-        return .{ .entries = .{}, .allocator = allocator };
+        return .{ .entries = std.ArrayList([]const u8).init(allocator), .allocator = allocator };
     }
 
     pub fn deinit(self: *History) void {
         for (self.entries.items) |e| self.allocator.free(e);
-        self.entries.deinit(self.allocator);
+        self.entries.deinit();
     }
 
     pub fn add(self: *History, line: []const u8) !void {
         const owned = try self.allocator.dupe(u8, line);
-        try self.entries.append(self.allocator, owned);
+        try self.entries.append(owned);
         self.pos = self.entries.items.len;
     }
 

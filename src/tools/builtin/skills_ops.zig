@@ -26,14 +26,18 @@ pub const SkillsList = struct {
         const dir_path = try getSkillsDir(allocator, ".");
         defer allocator.free(dir_path);
 
-        var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch
+        var io = std.Io.Threaded.init(allocator, .{});
+        defer io.deinit();
+        const cwd = std.Io.Dir.cwd();
+        
+        var dir = std.Io.Dir.openDir(cwd, io.io(), dir_path, .{ .iterate = true }) catch
             return .{ .output = try std.fmt.allocPrint(allocator, "No skills directory found at {s}", .{dir_path}) };
 
-        defer dir.close();
-        var result = std.ArrayList(u8){};
+        defer dir.close(io.io());
+        var result: std.ArrayList(u8) = .empty;
         defer result.deinit(allocator);
         var iter = dir.iterate();
-        while (try iter.next()) |entry| {
+        while (try iter.next(io.io())) |entry| {
             if (entry.kind == .directory) {
                 try result.appendSlice(allocator, entry.name);
                 try result.append(allocator, '\n');
@@ -62,8 +66,17 @@ pub const SkillView = struct {
         const path = try std.fmt.allocPrint(allocator, "{s}{s}/SKILL.md", .{ dir_path, skill_name });
         defer allocator.free(path);
 
-        return .{ .output = std.fs.cwd().readFileAlloc(allocator, path, 1024 * 1024) catch
-            return .{ .output = try std.fmt.allocPrint(allocator, "Skill not found: {s}", .{skill_name}) } };
+        var io = std.Io.Threaded.init(allocator, .{});
+        defer io.deinit();
+        const cwd = std.Io.Dir.cwd();
+        
+        const file = std.Io.Dir.openFile(cwd, io.io(), path, .{}) catch
+            return .{ .output = try std.fmt.allocPrint(allocator, "Skill not found: {s}", .{skill_name}) };
+        defer file.close(io.io());
+        
+        var read_buf: [4096]u8 = undefined;
+        var reader = file.reader(io.io(), &read_buf);
+        return .{ .output = try reader.interface.allocRemaining(allocator, @enumFromInt(1024 * 1024)) };
     }
 };
 
@@ -89,15 +102,26 @@ pub const SkillManage = struct {
         const skill_file = try std.fmt.allocPrint(allocator, "{s}/SKILL.md", .{skill_dir});
         defer allocator.free(skill_file);
 
+        var io = std.Io.Threaded.init(allocator, .{});
+        defer io.deinit();
+        const cwd = std.Io.Dir.cwd();
+
         if (std.mem.eql(u8, action, "delete")) {
-            std.fs.cwd().deleteTree(skill_dir) catch |e|
+            cwd.deleteTree(io.io(), skill_dir) catch |e|
                 return .{ .output = try std.fmt.allocPrint(allocator, "Error deleting skill: {s}", .{@errorName(e)}), .is_error = true };
             return .{ .output = try std.fmt.allocPrint(allocator, "Deleted skill: {s}", .{name}) };
         }
 
-        std.fs.cwd().makePath(skill_dir) catch |e|
+        cwd.createDirPath(io.io(), skill_dir) catch |e|
             return .{ .output = try std.fmt.allocPrint(allocator, "Error creating directory: {s}", .{@errorName(e)}), .is_error = true };
-        std.fs.cwd().writeFile(.{ .sub_path = skill_file, .data = content }) catch |e|
+        
+        const file = cwd.createFile(io.io(), skill_file, .{}) catch |e|
+            return .{ .output = try std.fmt.allocPrint(allocator, "Error creating skill file: {s}", .{@errorName(e)}), .is_error = true };
+        defer file.close(io.io());
+        
+        var write_buf: [4096]u8 = undefined;
+        var writer = file.writer(io.io(), &write_buf);
+        writer.interface.writeAll(content) catch |e|
             return .{ .output = try std.fmt.allocPrint(allocator, "Error writing skill: {s}", .{@errorName(e)}), .is_error = true };
 
         return .{ .output = try std.fmt.allocPrint(allocator, "Skill {s}d: {s}", .{ action, name }) };

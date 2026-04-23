@@ -2,7 +2,7 @@ const std = @import("std");
 const env = @import("env.zig");
 
 pub fn atomicJsonWrite(dir_path: []const u8, filename: []const u8, json: []const u8) !void {
-    const dir = try std.fs.cwd().openDir(dir_path, .{});
+    const dir = try std.fs.openDirAbsolute(dir_path, .{});
     const tmp_name = "._hermes_tmp";
     const file = try dir.createFile(tmp_name, .{});
     file.writeAll(json) catch |e| {
@@ -16,7 +16,7 @@ pub fn atomicJsonWrite(dir_path: []const u8, filename: []const u8, json: []const
 pub fn expandHome(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     if (path.len > 0 and path[0] == '~') {
         const home = try env.getHomeDirOwned(allocator);
-        const suffix = std.mem.trimLeft(u8, path[1..], "/\\");
+        const suffix = std.mem.trimStart(u8, path[1..], "/\\");
         if (suffix.len == 0) {
             return home;
         }

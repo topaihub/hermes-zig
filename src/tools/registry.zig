@@ -7,18 +7,21 @@ const ToolResult = interface.ToolResult;
 pub const ToolRegistry = struct {
     static_tools: []const ToolHandler,
     dynamic: std.StringHashMap(ToolHandler),
-    lock: std.Thread.RwLock = .{},
+    lock: std.Io.RwLock = std.Io.RwLock.init,
+    io: std.Io,
 
     pub fn init(allocator: std.mem.Allocator, static_tools: []const ToolHandler) ToolRegistry {
+        var io = std.Io.Threaded.init(allocator, .{});
         return .{
             .static_tools = static_tools,
             .dynamic = std.StringHashMap(ToolHandler).init(allocator),
+            .io = io.io(),
         };
     }
 
     pub fn registerDynamic(self: *ToolRegistry, handler: ToolHandler) !void {
-        self.lock.lock();
-        defer self.lock.unlock();
+        try self.lock.lock(self.io);
+        defer self.lock.unlock(self.io);
         try self.dynamic.put(handler.schema.name, handler);
     }
 
@@ -36,17 +39,17 @@ pub const ToolRegistry = struct {
             if (std.mem.eql(u8, h.schema.name, name)) return h.execute(allocator, args);
         }
         // Dynamic second (read lock)
-        self.lock.lockShared();
-        defer self.lock.unlockShared();
+        try self.lock.lockShared(self.io);
+        defer self.lock.unlockShared(self.io);
         if (self.dynamic.get(name)) |h| return h.execute(allocator, args);
         return error.ToolNotFound;
     }
 
     pub fn collectSchemas(self: *ToolRegistry, allocator: std.mem.Allocator) ![]ToolSchema {
-        var list = std.ArrayList(ToolSchema){};
+        var list = std.ArrayList(ToolSchema).empty;
         for (self.static_tools) |h| try list.append(allocator, h.schema);
-        self.lock.lockShared();
-        defer self.lock.unlockShared();
+        try self.lock.lockShared(self.io);
+        defer self.lock.unlockShared(self.io);
         var it = self.dynamic.valueIterator();
         while (it.next()) |h| try list.append(allocator, h.schema);
         return list.toOwnedSlice(allocator);

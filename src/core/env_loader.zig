@@ -13,10 +13,19 @@ pub fn loadEnvFile(allocator: std.mem.Allocator, path: []const u8) !EnvMap {
         map.deinit();
     }
 
-    const content = std.fs.cwd().readFileAlloc(allocator, path, 1024 * 1024) catch |err| switch (err) {
+    var io = std.Io.Threaded.init(allocator, .{});
+    defer io.deinit();
+    
+    const cwd = std.Io.Dir.cwd();
+    const file = std.Io.Dir.openFile(cwd, io.io(), path, .{}) catch |err| switch (err) {
         error.FileNotFound => return map,
         else => return err,
     };
+    defer file.close(io.io());
+    
+    var read_buf: [4096]u8 = undefined;
+    var reader = file.reader(io.io(), &read_buf);
+    const content = try reader.interface.allocRemaining(allocator, @enumFromInt(1024 * 1024));
     defer allocator.free(content);
 
     try parseEnvContent(allocator, content, &map);

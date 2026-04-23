@@ -10,8 +10,8 @@ pub fn buildSystemPrompt(
     soul_content: ?[]const u8,
     active_skill: ?*const skills_loader.SkillDefinition,
 ) ![]u8 {
-    var parts = std.ArrayList([]const u8){};
-    defer parts.deinit(allocator);
+    var parts = std.ArrayList([]const u8).init(allocator);
+    defer parts.deinit();
 
     if (soul_content) |soul| {
         // Scan for injection in context content

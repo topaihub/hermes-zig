@@ -13,7 +13,7 @@ pub fn formatTimestamp(allocator: std.mem.Allocator, unix_ms: i64) ![]u8 {
 }
 
 pub fn relativeTime(allocator: std.mem.Allocator, unix_ms: i64) ![]u8 {
-    const now_ms: i64 = @intCast(std.time.milliTimestamp());
+    const now_ms: i64 = @intCast(std.time.timestamp() * 1000);
     const diff_secs: u64 = @intCast(@max(0, @divTrunc(now_ms - unix_ms, 1000)));
     if (diff_secs < 60) return try std.fmt.allocPrint(allocator, "{d} seconds ago", .{diff_secs});
     if (diff_secs < 3600) return try std.fmt.allocPrint(allocator, "{d} minutes ago", .{diff_secs / 60});

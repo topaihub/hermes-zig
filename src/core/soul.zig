@@ -10,7 +10,7 @@ pub fn getHermesHome(allocator: std.mem.Allocator) ![]u8 {
 pub fn loadSoul(allocator: std.mem.Allocator, hermes_home: []const u8) ![]u8 {
     const path = try std.fs.path.join(allocator, &.{ hermes_home, "SOUL.md" });
     defer allocator.free(path);
-    return std.fs.cwd().readFileAlloc(allocator, path, 1024 * 1024) catch |err| switch (err) {
+    return std.fs.openFileAbsolute(path, .{}).reader().readAllAlloc(allocator, 1024 * 1024) catch |err| switch (err) {
         error.FileNotFound => try allocator.dupe(u8, DEFAULT_SOUL),
         else => err,
     };

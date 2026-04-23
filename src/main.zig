@@ -26,40 +26,63 @@ const banner =
 const config_filename = "config.json";
 
 extern "kernel32" fn SetConsoleCP(wCodePageID: std.os.windows.UINT) callconv(.winapi) std.os.windows.BOOL;
+extern "kernel32" fn SetConsoleOutputCP(wCodePageID: std.os.windows.UINT) callconv(.winapi) std.os.windows.BOOL;
+extern "kernel32" fn GetStdHandle(nStdHandle: std.os.windows.DWORD) callconv(.winapi) ?std.os.windows.HANDLE;
+extern "kernel32" fn GetConsoleMode(hConsoleHandle: std.os.windows.HANDLE, lpMode: *std.os.windows.DWORD) callconv(.winapi) std.os.windows.BOOL;
+extern "kernel32" fn SetConsoleMode(hConsoleHandle: std.os.windows.HANDLE, dwMode: std.os.windows.DWORD) callconv(.winapi) std.os.windows.BOOL;
 
 /// Enable UTF-8 and ANSI on Windows console
 fn initConsole() void {
     if (builtin.os.tag == .windows) {
-        const kernel32 = std.os.windows.kernel32;
         _ = SetConsoleCP(65001);
-        _ = kernel32.SetConsoleOutputCP(65001);
-        const handle = kernel32.GetStdHandle(std.os.windows.STD_OUTPUT_HANDLE);
+        _ = SetConsoleOutputCP(65001);
+        const STD_OUTPUT_HANDLE: std.os.windows.DWORD = @bitCast(@as(i32, -11));
+        const handle = GetStdHandle(STD_OUTPUT_HANDLE);
         if (handle) |h| {
             if (h != std.os.windows.INVALID_HANDLE_VALUE) {
                 var mode: std.os.windows.DWORD = 0;
-                if (kernel32.GetConsoleMode(h, &mode) != 0) {
-                    _ = kernel32.SetConsoleMode(h, mode | 0x0004);
+                if (GetConsoleMode(h, &mode) != .FALSE) {
+                    _ = SetConsoleMode(h, mode | 0x0004);
                 }
             }
         }
     }
 }
 
-fn readLine(stdin: std.fs.File, buf: []u8) !?[]const u8 {
+fn readLine(stdin: std.Io.File, buf: []u8) !?[]const u8 {
+    var io = std.Io.Threaded.init(std.heap.page_allocator, .{});
+    defer io.deinit();
+    
+    // Use readStreaming for simple byte-by-byte read
     var i: usize = 0;
     while (i < buf.len) {
-        const n = stdin.read(buf[i .. i + 1]) catch return null;
-        if (n == 0) return null;
+        var byte_buf: [1]u8 = undefined;
+        const buffers = [_][]u8{&byte_buf};
+        const n = stdin.readStreaming(io.io(), &buffers) catch return null;
+        if (n == 0) return if (i > 0) buf[0..i] else null;
+        buf[i] = byte_buf[0];
         if (buf[i] == '\n') return buf[0..i];
         i += 1;
     }
     return buf[0..i];
 }
 
-fn writeF(stdout: std.fs.File, allocator: std.mem.Allocator, comptime fmt: []const u8, args: anytype) !void {
+fn writeF(stdout: std.Io.File, allocator: std.mem.Allocator, comptime fmt: []const u8, args: anytype) !void {
     const msg = try std.fmt.allocPrint(allocator, fmt, args);
     defer allocator.free(msg);
-    try stdout.writeAll(msg);
+    var io = std.Io.Threaded.init(allocator, .{});
+    defer io.deinit();
+    var buf: [4096]u8 = undefined;
+    var writer = stdout.writer(io.io(), &buf);
+    try writer.interface.writeAll(msg);
+}
+
+fn writeStr(stdout: std.Io.File, allocator: std.mem.Allocator, msg: []const u8) !void {
+    var io = std.Io.Threaded.init(allocator, .{});
+    defer io.deinit();
+    var buf: [4096]u8 = undefined;
+    var writer = stdout.writer(io.io(), &buf);
+    try writer.interface.writeAll(msg);
 }
 
 fn renderChatErrorMessage(allocator: std.mem.Allocator, err_name: []const u8) ![]u8 {
@@ -109,26 +132,38 @@ fn resolvePathFromBaseAlloc(allocator: std.mem.Allocator, base_dir: []const u8, 
 }
 
 fn exeRelativePathAlloc(allocator: std.mem.Allocator, filename: []const u8) ![]u8 {
-    const exe_path = try std.fs.selfExePathAlloc(allocator);
+    var io = std.Io.Threaded.init(allocator, .{});
+    defer io.deinit();
+    const exe_path = try std.process.executablePathAlloc(io.io(), allocator);
     defer allocator.free(exe_path);
     const exe_dir = std.fs.path.dirname(exe_path) orelse ".";
     return std.fs.path.join(allocator, &.{ exe_dir, filename });
 }
 
 fn pathExists(path: []const u8) bool {
+    var io = std.Io.Threaded.init(std.heap.page_allocator, .{});
+    defer io.deinit();
+    
     if (std.fs.path.isAbsolute(path)) {
-        std.fs.accessAbsolute(path, .{}) catch return false;
+        const file = std.Io.Dir.openFileAbsolute(io.io(), path, .{}) catch return false;
+        file.close(io.io());
         return true;
     }
-    std.fs.cwd().access(path, .{}) catch return false;
+    const cwd = std.Io.Dir.cwd();
+    const file = std.Io.Dir.openFile(cwd, io.io(), path, .{}) catch return false;
+    file.close(io.io());
     return true;
 }
 
-fn createConfigFile(config_path: []const u8) !std.fs.File {
+fn createConfigFile(config_path: []const u8, allocator: std.mem.Allocator) !std.Io.File {
+    var io = std.Io.Threaded.init(allocator, .{});
+    defer io.deinit();
+    
     if (std.fs.path.isAbsolute(config_path)) {
-        return std.fs.createFileAbsolute(config_path, .{});
+        return std.Io.Dir.createFileAbsolute(io.io(), config_path, .{});
     }
-    return std.fs.cwd().createFile(config_path, .{});
+    const cwd = std.Io.Dir.cwd();
+    return cwd.createFile(io.io(), config_path, .{});
 }
 
 fn readConfigFileAlloc(allocator: std.mem.Allocator, config_path: []const u8, max_bytes: usize) ![]u8 {
@@ -143,9 +178,14 @@ fn readConfigFileAlloc(allocator: std.mem.Allocator, config_path: []const u8, ma
 fn saveConfigAlloc(allocator: std.mem.Allocator, config_path: []const u8, cfg: core.Config) !void {
     const json = try std.json.Stringify.valueAlloc(allocator, cfg, .{ .whitespace = .indent_2 });
     defer allocator.free(json);
-    var file = try createConfigFile(config_path);
-    defer file.close();
-    try file.writeAll(json);
+    var file = try createConfigFile(config_path, allocator);
+    var io = std.Io.Threaded.init(allocator, .{});
+    defer io.deinit();
+    defer file.close(io.io());
+    
+    var write_buf: [4096]u8 = undefined;
+    var writer = file.writer(io.io(), &write_buf);
+    try writer.interface.writeAll(json);
 }
 
 fn clearLoadedConfig(loaded_cfg: *?core.LoadedConfig) void {
@@ -234,31 +274,47 @@ fn reloadRuntimeState(
     old_tools_runtime_mut.deinit();
 }
 
-fn printLoadedConfigSummary(allocator: std.mem.Allocator, stdout: std.fs.File, cfg: *const core.Config) !void {
+fn printLoadedConfigSummary(allocator: std.mem.Allocator, stdout: std.Io.File, cfg: *const core.Config) !void {
     try writeF(stdout, allocator, "  Provider: \x1b[32m{s}\x1b[0m\n", .{cfg.provider});
     try writeF(stdout, allocator, "  Model:    \x1b[32m{s}\x1b[0m\n", .{cfg.model});
-    try stdout.writeAll("\n");
+    var io = std.Io.Threaded.init(allocator, .{});
+    defer io.deinit();
+    var buf: [4096]u8 = undefined;
+    var writer = stdout.writer(io.io(), &buf);
+    try writer.interface.writeAll("\n");
 }
 
 fn ensureUtf8BomFile(path: []const u8) !void {
     const parent = std.fs.path.dirname(path);
     if (parent) |dir_path| {
-        if (std.fs.path.isAbsolute(dir_path)) {
-            try std.fs.cwd().makePath(dir_path);
-        } else {
-            try std.fs.cwd().makePath(dir_path);
-        }
+        var io_threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
+        const io_instance = io_threaded.io();
+        const cwd = std.Io.Dir.cwd();
+        try std.Io.Dir.createDirPath(cwd, io_instance, dir_path);
     }
 
-    const file = if (std.fs.path.isAbsolute(path))
-        try std.fs.createFileAbsolute(path, .{ .read = true, .truncate = false })
-    else
-        try std.fs.cwd().createFile(path, .{ .read = true, .truncate = false });
-    defer file.close();
+    const file = blk: {
+        if (std.fs.path.isAbsolute(path)) {
+            var io_threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
+            const io_instance = io_threaded.io();
+            break :blk try std.Io.Dir.openFileAbsolute(io_instance, path, .{ .mode = .read_write });
+        } else {
+            const cwd = std.Io.Dir.cwd();
+            var io_threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
+            const io_instance = io_threaded.io();
+            break :blk try cwd.createFile(io_instance, path, .{});
+        }
+    };
+    var io_threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
+    const io_instance = io_threaded.io();
+    defer file.close(io_instance);
 
-    const stat = try file.stat();
+    const stat = try file.stat(io_instance);
     if (stat.size == 0) {
-        try file.writeAll("\xEF\xBB\xBF");
+        var buffer: [4096]u8 = undefined;
+        var writer = file.writer(io_instance, &buffer);
+        try writer.interface.writeAll("\xEF\xBB\xBF");
+        try writer.interface.flush();
     }
 }
 
@@ -297,10 +353,14 @@ fn switchModel(
 
 pub fn main() !void {
     initConsole();
-    const stdout = std.fs.File.stdout();
-    const stdin = std.fs.File.stdin();
+    
+    var io = std.Io.Threaded.init(std.heap.page_allocator, .{});
+    defer io.deinit();
+    
+    const stdout = std.Io.File.stdout();
+    const stdin = std.Io.File.stdin();
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
     const config_path = try resolveConfigPathAlloc(allocator);
@@ -308,7 +368,9 @@ pub fn main() !void {
     const config_base_dir = try configBaseDirAlloc(allocator, config_path);
     defer allocator.free(config_base_dir);
 
-    try stdout.writeAll("\x1b[36m" ++ banner ++ "\x1b[0m\n");
+    var write_buf: [1024]u8 = undefined;
+    var writer = stdout.writer(io.io(), &write_buf);
+    try writer.interface.writeAll("\x1b[36m" ++ banner ++ "\x1b[0m\n");
 
     // Load .env file if it exists
     var env_map = try core.env_loader.loadEnvFile(allocator, ".env");
@@ -348,12 +410,14 @@ pub fn main() !void {
         }
     } else {
         // Generate default config.json
-        var df = createConfigFile(config_path) catch null;
+        var df = createConfigFile(config_path, allocator) catch null;
         if (df) |*file| {
-            defer file.close();
-            file.writeAll(default_config) catch {};
-            try stdout.writeAll("  Generated default config.json\n");
-            try stdout.writeAll("  Starting setup wizard...\n\n");
+            defer file.close(io.io());
+            var file_write_buf: [4096]u8 = undefined;
+            var file_writer = file.writer(io.io(), &file_write_buf);
+            file_writer.interface.writeAll(default_config) catch {};
+            try writer.interface.writeAll("  Generated default config.json\n");
+            try writer.interface.writeAll("  Starting setup wizard...\n\n");
             try runSetupWizard(allocator, stdout, stdin, config_path);
             try reloadRuntimeState(
                 allocator,
@@ -389,15 +453,18 @@ pub fn main() !void {
     var has_json_file_sink = false;
     defer if (has_json_file_sink) json_file_sink.deinit();
 
+    var io_threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
+    var io_value = io_threaded.io();
+
     if (usesTextLogFormat(cfg.logging.log_format)) {
         const trace_log_dir = try resolvePathFromBaseAlloc(allocator, config_base_dir, cfg.logging.log_dir);
         defer allocator.free(trace_log_dir);
         const trace_log_path = try std.fs.path.join(allocator, &.{ trace_log_dir, "hermes-trace.log" });
         defer allocator.free(trace_log_path);
         try ensureUtf8BomFile(trace_log_path);
-
         trace_file_sink = try framework.TraceTextFileSink.init(
             allocator,
+            &io_value,
             trace_log_path,
             cfg.logging.max_file_bytes,
             .{
@@ -414,7 +481,7 @@ pub fn main() !void {
     if (usesJsonLogFormat(cfg.logging.log_format)) {
         const json_log_dir = try resolvePathFromBaseAlloc(allocator, config_base_dir, cfg.logging.log_dir);
         defer allocator.free(json_log_dir);
-        json_file_sink = framework.RotatingFileSink.init(allocator, .{
+        json_file_sink = framework.RotatingFileSink.init(allocator, &io_value, .{
             .log_dir = json_log_dir,
             .prefix = if (usesTextLogFormat(cfg.logging.log_format)) "hermes-json" else "hermes",
             .max_file_bytes = cfg.logging.max_file_bytes,
@@ -440,7 +507,7 @@ pub fn main() !void {
     };
     const web_thread = std.Thread.spawn(.{}, web_server_mod.WebConfigServer.start, .{&web_server}) catch null;
 
-    try stdout.writeAll("  Config UI: \x1b[36mhttp://127.0.0.1:8318\x1b[0m\n\n");
+    try writeStr(stdout, allocator, "  Config UI: \x1b[36mhttp://127.0.0.1:8318\x1b[0m\n\n");
 
     var skills_runtime = try interface.cli.SkillsRuntime.init(allocator);
     defer skills_runtime.deinit();
@@ -467,16 +534,16 @@ pub fn main() !void {
     try conversation.append(allocator, .{ .role = .system, .content = soul_text });
 
     // Main interactive loop
-    try stdout.writeAll("  Type a message to chat, or use commands:\n");
-    try stdout.writeAll("  \x1b[90m/setup\x1b[0m  — Configure provider and API key\n");
-    try stdout.writeAll("  \x1b[90m/model\x1b[0m  — Switch model\n");
-    try stdout.writeAll("  \x1b[90m/config\x1b[0m — Show current config\n");
-    try stdout.writeAll("  \x1b[90m/skills\x1b[0m — Browse or activate installed skills\n");
+    try writeStr(stdout, allocator, "  Type a message to chat, or use commands:\n");
+    try writeStr(stdout, allocator, "  \x1b[90m/setup\x1b[0m  — Configure provider and API key\n");
+    try writeStr(stdout, allocator, "  \x1b[90m/model\x1b[0m  — Switch model\n");
+    try writeStr(stdout, allocator, "  \x1b[90m/config\x1b[0m — Show current config\n");
+    try writeStr(stdout, allocator, "  \x1b[90m/skills\x1b[0m — Browse or activate installed skills\n");
     if (interface.cli.canUseInteractiveInput(stdin, stdout)) {
-        try stdout.writeAll("  Type \x1b[90m/\x1b[0m for command suggestions, \x1b[90mTab\x1b[0m to complete\n");
+        try writeStr(stdout, allocator, "  Type \x1b[90m/\x1b[0m for command suggestions, \x1b[90mTab\x1b[0m to complete\n");
     }
-    try stdout.writeAll("  \x1b[90m/help\x1b[0m   — Show all commands\n");
-    try stdout.writeAll("  \x1b[90m/quit\x1b[0m   — Exit\n\n");
+    try writeStr(stdout, allocator, "  \x1b[90m/help\x1b[0m   — Show all commands\n");
+    try writeStr(stdout, allocator, "  \x1b[90m/quit\x1b[0m   — Exit\n\n");
 
     var history = interface.cli.History.init(allocator);
     defer history.deinit();
@@ -484,7 +551,7 @@ pub fn main() !void {
     var request_seq: u64 = 0;
     while (true) {
         if (!interface.cli.canUseInteractiveInput(stdin, stdout)) {
-            try stdout.writeAll("\x1b[36mhermes>\x1b[0m ");
+            try writeStr(stdout, allocator, "\x1b[36mhermes>\x1b[0m ");
         }
 
         const raw = try interface.cli.readInputLine(allocator, stdin, stdout, &history) orelse break;
@@ -547,7 +614,7 @@ pub fn main() !void {
 
         if (resolved_provider == null) {
             framework.observability.request_trace.complete(app_ctx.logger, &request_trace, 503, "LLM_NOT_CONFIGURED");
-            try stdout.writeAll("\n  \x1b[33m⚡ Agent:\x1b[0m LLM not configured yet. Run \x1b[36m/setup\x1b[0m to configure.\n\n");
+            try writeStr(stdout, allocator, "\n  \x1b[33m⚡ Agent:\x1b[0m LLM not configured yet. Run \x1b[36m/setup\x1b[0m to configure.\n\n");
             continue;
         }
 
@@ -581,9 +648,9 @@ pub fn main() !void {
         session_usage.completion_tokens += result.usage.completion_tokens;
         session_usage.total_tokens += result.usage.total_tokens;
 
-        try stdout.writeAll("\n  \x1b[33m⚡ Agent:\x1b[0m ");
-        try stdout.writeAll(result.content);
-        try stdout.writeAll("\n\n");
+        try writeStr(stdout, allocator, "\n  \x1b[33m⚡ Agent:\x1b[0m ");
+        try writeStr(stdout, allocator, result.content);
+        try writeStr(stdout, allocator, "\n\n");
 
         try conversation.append(allocator, .{ .role = .assistant, .content = try allocator.dupe(u8, result.content) });
     }
@@ -591,7 +658,7 @@ pub fn main() !void {
     web_server.stop();
     if (web_thread) |wt| wt.join();
 
-    try stdout.writeAll("\n  Goodbye! 👋\n");
+    try writeStr(stdout, allocator, "\n  Goodbye! 👋\n");
 }
 
 fn handleCommand(
@@ -645,15 +712,15 @@ fn handleCommand(
 
                 try writeF(stdout, allocator, "\n  \x1b[1mCurrent model:\x1b[0m \x1b[32m{s}\x1b[0m\n", .{cfg.model});
                 if (cfg.models.len > 0) {
-                    try stdout.writeAll("\n  \x1b[1mAvailable models:\x1b[0m\n");
+                    try writeStr(stdout, allocator, "\n  \x1b[1mAvailable models:\x1b[0m\n");
                     for (cfg.models) |m| {
                         try writeF(stdout, allocator, "    • {s}\n", .{m});
                     }
                 } else {
-                    try stdout.writeAll("\n  No models configured. Add a \"models\" array to config.json:\n");
-                    try stdout.writeAll("  \x1b[90m\"models\": [\"gpt-4o\", \"claude-sonnet-4\", \"gemini-2.5-pro\"]\x1b[0m\n");
+                    try writeStr(stdout, allocator, "\n  No models configured. Add a \"models\" array to config.json:\n");
+                    try writeStr(stdout, allocator, "  \x1b[90m\"models\": [\"gpt-4o\", \"claude-sonnet-4\", \"gemini-2.5-pro\"]\x1b[0m\n");
                 }
-                try stdout.writeAll("\n  Usage: /model <name>\n\n");
+                try writeStr(stdout, allocator, "\n  Usage: /model <name>\n\n");
                 return .continue_session;
             }
 
@@ -661,12 +728,12 @@ fn handleCommand(
             if (!(try switchModel(allocator, config_path, cfg, owned_model_override, target_model))) {
                 try writeF(stdout, allocator, "\n  Invalid model: {s}\n", .{target_model});
                 if (cfg.models.len > 0) {
-                    try stdout.writeAll("  Choose one of the configured models:\n");
+                    try writeStr(stdout, allocator, "  Choose one of the configured models:\n");
                     for (cfg.models) |m| {
                         try writeF(stdout, allocator, "    • {s}\n", .{m});
                     }
                 }
-                try stdout.writeAll("\n");
+                try writeStr(stdout, allocator, "\n");
                 return .continue_session;
             }
             try writeF(stdout, allocator, "\n  Model switched to: \x1b[32m{s}\x1b[0m\n\n", .{target_model});
@@ -682,7 +749,7 @@ fn handleCommand(
         },
         .skills_view => {
             const name = parsed.arg orelse {
-                try stdout.writeAll("\n  Usage: /skills view <name>\n\n");
+                try writeStr(stdout, allocator, "\n  Usage: /skills view <name>\n\n");
                 return .continue_session;
             };
             try interface.cli.skills_config.renderSkillView(allocator, stdout, skills_runtime, name);
@@ -690,7 +757,7 @@ fn handleCommand(
         },
         .skills_use => {
             const name = parsed.arg orelse {
-                try stdout.writeAll("\n  Usage: /skills use <name>\n\n");
+                try writeStr(stdout, allocator, "\n  Usage: /skills use <name>\n\n");
                 return .continue_session;
             };
             try interface.cli.skills_config.activateSkill(allocator, stdout, skills_runtime, name);
@@ -701,7 +768,7 @@ fn handleCommand(
             return .continue_session;
         },
         .usage => {
-            try stdout.writeAll("\n  \x1b[1mUsage:\x1b[0m\n");
+            try writeStr(stdout, allocator, "\n  \x1b[1mUsage:\x1b[0m\n");
             try writeF(stdout, allocator, "    Prompt tokens:     {d}\n", .{session_usage.prompt_tokens});
             try writeF(stdout, allocator, "    Completion tokens: {d}\n", .{session_usage.completion_tokens});
             try writeF(stdout, allocator, "    Total tokens:      {d}\n\n", .{session_usage.total_tokens});
@@ -719,7 +786,7 @@ fn handleCommand(
             return .continue_session;
         },
         .new_session => {
-            try stdout.writeAll("\n  ✨ New conversation started.\n\n");
+            try writeStr(stdout, allocator, "\n  ✨ New conversation started.\n\n");
             return .new_session;
         },
         .unknown => {
@@ -785,17 +852,17 @@ fn freeRequestMessages(allocator: std.mem.Allocator, messages: []core.Message) v
     allocator.free(messages);
 }
 
-fn runSetupWizard(allocator: std.mem.Allocator, stdout: std.fs.File, stdin: std.fs.File, config_path: []const u8) !void {
-    try stdout.writeAll("\n  \x1b[1m═══ Setup Wizard ═══\x1b[0m\n\n");
+fn runSetupWizard(allocator: std.mem.Allocator, stdout: std.Io.File, stdin: std.Io.File, config_path: []const u8) !void {
+    try writeStr(stdout, allocator, "\n  \x1b[1m═══ Setup Wizard ═══\x1b[0m\n\n");
 
     // Provider selection
-    try stdout.writeAll("  Select a provider:\n");
-    try stdout.writeAll("    \x1b[36m1\x1b[0m) OpenRouter (200+ models, recommended)\n");
-    try stdout.writeAll("    \x1b[36m2\x1b[0m) OpenAI\n");
-    try stdout.writeAll("    \x1b[36m3\x1b[0m) Anthropic (Claude)\n");
-    try stdout.writeAll("    \x1b[36m4\x1b[0m) Nous Research\n");
-    try stdout.writeAll("    \x1b[36m5\x1b[0m) Custom endpoint\n");
-    try stdout.writeAll("\n  Choice [1]: ");
+    try writeStr(stdout, allocator, "  Select a provider:\n");
+    try writeStr(stdout, allocator, "    \x1b[36m1\x1b[0m) OpenRouter (200+ models, recommended)\n");
+    try writeStr(stdout, allocator, "    \x1b[36m2\x1b[0m) OpenAI\n");
+    try writeStr(stdout, allocator, "    \x1b[36m3\x1b[0m) Anthropic (Claude)\n");
+    try writeStr(stdout, allocator, "    \x1b[36m4\x1b[0m) Nous Research\n");
+    try writeStr(stdout, allocator, "    \x1b[36m5\x1b[0m) Custom endpoint\n");
+    try writeStr(stdout, allocator, "\n  Choice [1]: ");
 
     var choice_buf: [256]u8 = undefined;
     const choice_raw = try readLine(stdin, &choice_buf) orelse "";
@@ -815,7 +882,7 @@ fn runSetupWizard(allocator: std.mem.Allocator, stdout: std.fs.File, stdin: std.
     try writeF(stdout, allocator, "\n  Provider: \x1b[32m{s}\x1b[0m\n", .{provider});
 
     // API key
-    try stdout.writeAll("\n  Enter API key: ");
+    try writeStr(stdout, allocator, "\n  Enter API key: ");
     var key_buf: [512]u8 = undefined;
     const key_raw = try readLine(stdin, &key_buf) orelse "";
     const api_key = std.mem.trim(u8, key_raw, " \t\r\n");
@@ -827,7 +894,7 @@ fn runSetupWizard(allocator: std.mem.Allocator, stdout: std.fs.File, stdin: std.
 
     const api_base_url = if (std.mem.eql(u8, provider, "custom")) blk: {
         while (true) {
-            try stdout.writeAll("\n  API base URL: ");
+            try writeStr(stdout, allocator, "\n  API base URL: ");
             var url_buf: [512]u8 = undefined;
             const url_raw = try readLine(stdin, &url_buf) orelse "";
             const url = std.mem.trim(u8, url_raw, " \t\r\n");
@@ -835,15 +902,15 @@ fn runSetupWizard(allocator: std.mem.Allocator, stdout: std.fs.File, stdin: std.
                 try writeF(stdout, allocator, "  API base URL: \x1b[32m{s}\x1b[0m\n", .{url});
                 break :blk url;
             }
-            try stdout.writeAll("  API base URL is required for custom provider.\n");
+            try writeStr(stdout, allocator, "  API base URL is required for custom provider.\n");
         }
     } else "";
 
     const wire_api = if (std.mem.eql(u8, provider, "custom") or std.mem.eql(u8, provider, "openai")) blk: {
-        try stdout.writeAll("\n  Select API protocol:\n");
-        try stdout.writeAll("    \x1b[36m1\x1b[0m) Chat Completions\n");
-        try stdout.writeAll("    \x1b[36m2\x1b[0m) Responses\n");
-        try stdout.writeAll("\n  Choice [1]: ");
+        try writeStr(stdout, allocator, "\n  Select API protocol:\n");
+        try writeStr(stdout, allocator, "    \x1b[36m1\x1b[0m) Chat Completions\n");
+        try writeStr(stdout, allocator, "    \x1b[36m2\x1b[0m) Responses\n");
+        try writeStr(stdout, allocator, "\n  Choice [1]: ");
 
         var wire_buf: [64]u8 = undefined;
         const wire_raw = try readLine(stdin, &wire_buf) orelse "";
@@ -877,11 +944,16 @@ fn runSetupWizard(allocator: std.mem.Allocator, stdout: std.fs.File, stdin: std.
     const config_json = try buildSetupConfigJson(allocator, provider, model, api_key, api_base_url, wire_api);
     defer allocator.free(config_json);
 
-    var file = try createConfigFile(config_path);
-    defer file.close();
-    try file.writeAll(config_json);
+    var file = try createConfigFile(config_path, allocator);
+    var io_inst = std.Io.Threaded.init(allocator, .{});
+    defer io_inst.deinit();
+    defer file.close(io_inst.io());
+    
+    var write_buf: [4096]u8 = undefined;
+    var writer = file.writer(io_inst.io(), &write_buf);
+    try writer.interface.writeAll(config_json);
 
-    try stdout.writeAll("\n  \x1b[32m✓ Configuration saved to config.json\x1b[0m\n\n");
+    try writeStr(stdout, allocator, "\n  \x1b[32m✓ Configuration saved to config.json\x1b[0m\n\n");
 }
 
 fn buildSetupConfigJson(
@@ -952,7 +1024,7 @@ fn buildSetupModels(
             "gpt-5.3-codex",
         };
 
-    var models = std.ArrayList([]u8){};
+    var models: std.ArrayList([]u8) = .empty;
     errdefer {
         for (models.items) |item| allocator.free(item);
         models.deinit(allocator);
@@ -992,9 +1064,9 @@ fn showConfig(allocator: std.mem.Allocator, stdout: std.fs.File, config_path: []
         return;
     };
     defer allocator.free(content);
-    try stdout.writeAll("\n  \x1b[1mCurrent Configuration:\x1b[0m\n\x1b[90m");
-    try stdout.writeAll(content);
-    try stdout.writeAll("\x1b[0m\n\n");
+    try writeStr(stdout, allocator, "\n  \x1b[1mCurrent Configuration:\x1b[0m\n\x1b[90m");
+    try writeStr(stdout, allocator, content);
+    try writeStr(stdout, allocator, "\x1b[0m\n\n");
 }
 
 // ============ Tests ============
@@ -1096,7 +1168,10 @@ test "chooseConfigPathAlloc prefers executable config over cwd fallback" {
 
     const tmp_dir_rel = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", tmp.sub_path[0..] });
     defer std.testing.allocator.free(tmp_dir_rel);
-    const tmp_dir_abs = try std.fs.cwd().realpathAlloc(std.testing.allocator, tmp_dir_rel);
+    
+    var io = std.Io.init();
+    const cwd = std.Io.Dir.cwd(&io);
+    const tmp_dir_abs = try cwd.realpathAlloc(std.testing.allocator, tmp_dir_rel);
     defer std.testing.allocator.free(tmp_dir_abs);
 
     const exe_config = try std.fs.path.join(std.testing.allocator, &.{ tmp_dir_abs, "exe-config.json" });
@@ -1104,8 +1179,8 @@ test "chooseConfigPathAlloc prefers executable config over cwd fallback" {
     const cwd_config = try std.fs.path.join(std.testing.allocator, &.{ tmp_dir_abs, "cwd-config.json" });
     defer std.testing.allocator.free(cwd_config);
 
-    try std.fs.cwd().writeFile(.{ .sub_path = exe_config, .data = "{}" });
-    try std.fs.cwd().writeFile(.{ .sub_path = cwd_config, .data = "{}" });
+    try cwd.writeFile(.{ .sub_path = exe_config, .data = "{}" });
+    try cwd.writeFile(.{ .sub_path = cwd_config, .data = "{}" });
 
     const chosen = try chooseConfigPathAlloc(std.testing.allocator, exe_config, cwd_config);
     defer std.testing.allocator.free(chosen);

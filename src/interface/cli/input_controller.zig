@@ -139,7 +139,7 @@ const Selector = struct {
 
 const Editor = struct {
     allocator: std.mem.Allocator,
-    buffer: std.ArrayList(u8) = .{},
+    buffer: std.ArrayList(u8),
     suggestions: [16]usize = undefined,
     suggestion_count: usize = 0,
     selected_index: usize = 0,
@@ -148,11 +148,11 @@ const Editor = struct {
     rendered_menu_lines: usize = 0,
 
     fn deinit(self: *Editor) void {
-        self.buffer.deinit(self.allocator);
+        self.buffer.deinit();
     }
 
     fn appendText(self: *Editor, text: []const u8) !void {
-        try self.buffer.appendSlice(self.allocator, text);
+        try self.buffer.appendSlice(text);
         self.refreshSuggestions();
     }
 
@@ -166,7 +166,7 @@ const Editor = struct {
 
     fn setBuffer(self: *Editor, value: []const u8) !void {
         self.buffer.clearRetainingCapacity();
-        try self.buffer.appendSlice(self.allocator, value);
+        try self.buffer.appendSlice(value);
         self.refreshSuggestions();
     }
 
@@ -199,10 +199,10 @@ const Editor = struct {
         if (!self.suggestions_visible or self.suggestion_count == 0) return;
         const spec = commands.allPrimarySpecs()[self.suggestions[self.selected_index]];
         self.buffer.clearRetainingCapacity();
-        try self.buffer.append(self.allocator, '/');
-        try self.buffer.appendSlice(self.allocator, spec.literal);
+        try self.buffer.append('/');
+        try self.buffer.appendSlice(spec.literal);
         if (spec.takes_arg) {
-            try self.buffer.append(self.allocator, ' ');
+            try self.buffer.append(' ');
         }
         self.refreshSuggestions();
     }
@@ -243,7 +243,10 @@ fn readInteractiveWindows(
     const guard = try ConsoleInputModeGuard.enable(stdin);
     defer guard.disable();
 
-    var editor = Editor{ .allocator = allocator };
+    var editor = Editor{ 
+        .allocator = allocator,
+        .buffer = std.ArrayList(u8).init(allocator),
+    };
     defer editor.deinit();
 
     while (true) {
@@ -296,7 +299,10 @@ fn readInteractivePosix(
     defer raw.disable();
 
     const reader = tui.InputReader{ .fd = stdin.handle };
-    var editor = Editor{ .allocator = allocator };
+    var editor = Editor{ 
+        .allocator = allocator,
+        .buffer = std.ArrayList(u8).init(allocator),
+    };
     defer editor.deinit();
 
     while (true) {

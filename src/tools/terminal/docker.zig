@@ -8,17 +8,33 @@ pub const DockerBackend = struct {
 
     pub fn execute(self: *DockerBackend, allocator: std.mem.Allocator, cmd: []const u8, _: []const u8, _: u64) !ExecResult {
         const target = if (self.container.len > 0) self.container else self.image;
-        var child = std.process.Child.init(&.{ "docker", "exec", target, "sh", "-c", cmd }, allocator);
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Pipe;
-        try child.spawn();
-        const stdout = try child.stdout.?.readToEndAlloc(allocator, 1024 * 1024);
-        const stderr = try child.stderr.?.readToEndAlloc(allocator, 1024 * 1024);
-        const term = try child.wait();
+        
+        var io = std.Io.Threaded.init(allocator, .{});
+        defer io.deinit();
+        
+        var child = try std.process.spawn(io.io(), .{
+            .argv = &.{ "docker", "exec", target, "sh", "-c", cmd },
+            .stdout = .pipe,
+            .stderr = .pipe,
+        });
+        
+        var stdout_buf: [4096]u8 = undefined;
+        var stderr_buf: [4096]u8 = undefined;
+        var stdout_reader = child.stdout.?.reader(io.io(), &stdout_buf);
+        var stderr_reader = child.stderr.?.reader(io.io(), &stderr_buf);
+        
+        const stdout = try stdout_reader.interface.allocRemaining(allocator, @enumFromInt(1024 * 1024));
+        errdefer allocator.free(stdout);
+        const stderr = try stderr_reader.interface.allocRemaining(allocator, @enumFromInt(1024 * 1024));
+        
+        if (child.stdout) |f| f.close(io.io());
+        if (child.stderr) |f| f.close(io.io());
+        
+        const term = try child.wait(io.io());
         return .{
             .stdout = stdout,
             .stderr = stderr,
-            .exit_code = if (term == .Exited) term.Exited else 1,
+            .exit_code = if (term == .exited) term.exited else 1,
             .allocator = allocator,
         };
     }

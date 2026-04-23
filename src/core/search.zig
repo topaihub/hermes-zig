@@ -16,7 +16,7 @@ pub fn searchMessages(db: sqlite.Database, allocator: std.mem.Allocator, query: 
     defer stmt.finalize();
     try stmt.bindText(1, query);
 
-    var results: std.ArrayList(SearchResult) = .{};
+    var results: std.ArrayList(SearchResult) = .empty;
     errdefer {
         for (results.items) |r| {
             allocator.free(r.session_id);

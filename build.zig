@@ -22,7 +22,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{.{ .name = "framework", .module = framework_mod }},
         }),
     });
-    exe.linkLibrary(sqlite3_lib);
+    exe.root_module.linkLibrary(sqlite3_lib);
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -39,6 +39,6 @@ pub fn build(b: *std.Build) void {
             .imports = &.{.{ .name = "framework", .module = framework_mod }},
         }),
     });
-    tests.linkLibrary(sqlite3_lib);
+    tests.root_module.linkLibrary(sqlite3_lib);
     b.step("test", "Run unit tests").dependOn(&b.addRunArtifact(tests).step);
 }

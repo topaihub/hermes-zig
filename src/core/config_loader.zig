@@ -17,7 +17,16 @@ pub fn loadFromString(json: []const u8, allocator: std.mem.Allocator) !LoadedCon
 }
 
 pub fn loadFromFile(path: []const u8, allocator: std.mem.Allocator) !LoadedConfig {
-    const data = try std.fs.cwd().readFileAlloc(allocator, path, 1024 * 1024);
+    var io = std.Io.Threaded.init(allocator, .{});
+    defer io.deinit();
+    
+    const cwd = std.Io.Dir.cwd();
+    const file = try std.Io.Dir.openFile(cwd, io.io(), path, .{});
+    defer file.close(io.io());
+    
+    var read_buf: [4096]u8 = undefined;
+    var reader = file.reader(io.io(), &read_buf);
+    const data = try reader.interface.allocRemaining(allocator, @enumFromInt(1024 * 1024));
     defer allocator.free(data);
     return loadFromString(data, allocator);
 }

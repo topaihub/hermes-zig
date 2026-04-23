@@ -1,5 +1,5 @@
 const std = @import("std");
-const net = std.net;
+const net = std.Io.net;
 const http = std.http;
 
 const html_content = @embedFile("web_config.html");
@@ -12,26 +12,28 @@ pub const WebConfigServer = struct {
     listener: ?net.Server = null,
 
     pub fn start(self: *WebConfigServer) void {
-        const addr = net.Address.parseIp("127.0.0.1", self.port) catch return;
-        var server = addr.listen(.{ .reuse_address = true }) catch return;
+        var io_threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
+        const io_instance = io_threaded.io();
+        const addr = net.IpAddress.parseIp4("127.0.0.1", self.port) catch return;
+        var server = addr.listen(io_instance, .{ .reuse_address = true }) catch return;
         self.listener = server;
         self.running.store(true, .release);
         defer {
             if (self.listener != null) {
-                server.deinit();
+                server.deinit(io_instance);
                 self.listener = null;
             }
         }
 
         while (self.running.load(.acquire)) {
-            const conn = server.accept() catch |err| {
+            const conn = server.accept(io_instance) catch |err| {
                 if (!self.running.load(.acquire) or err == error.ConnectionAborted or err == error.Unexpected) {
                     return;
                 }
                 return;
             };
-            self.handleConnection(conn.stream) catch {};
-            conn.stream.close();
+            self.handleConnection(conn) catch {};
+            conn.close();
         }
     }
 
