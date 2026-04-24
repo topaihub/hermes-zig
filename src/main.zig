@@ -379,7 +379,7 @@ pub fn main() !void {
 
     // Load .env file if it exists
     var env_map = try core.env_loader.loadEnvFile(allocator, ".env");
-    defer core.env_loader.deinitEnvMap(allocator, &env_map);
+    defer core.env_loader.freeEnvMap(&env_map);
 
     const default_config = @embedFile("default_config.json");
     var loaded_cfg: ?core.LoadedConfig = null;

@@ -69,8 +69,8 @@ pub const AnthropicClient = struct {
         const content_arr = root.object.get("content") orelse return response;
         if (content_arr != .array) return response;
 
-        var text_buf = std.ArrayList(u8){};
-        var tool_calls = std.ArrayList(interface.ToolCall){};
+        var text_buf: std.ArrayList(u8) = .empty;
+        var tool_calls: std.ArrayList(interface.ToolCall) = .empty;
 
         for (content_arr.array.items) |block| {
             if (block != .object) continue;
@@ -121,7 +121,7 @@ pub const AnthropicClient = struct {
         });
         _ = &resp;
 
-        var content_buf = std.ArrayList(u8){};
+        var content_buf: std.ArrayList(u8) = .empty;
         var sse = streaming.SseParser.init(a);
         defer sse.deinit();
 
@@ -170,43 +170,43 @@ fn jsonInt(obj: std.json.Value, key: []const u8) u32 {
 }
 
 fn buildAnthropicBody(a: std.mem.Allocator, request: CompletionRequest, stream: bool) ![]const u8 {
-    var obj = std.json.ObjectMap.init(a);
+    var obj: std.json.ObjectMap = .empty;
 
-    try obj.put("model", .{ .string = request.model });
-    try obj.put("stream", .{ .bool = stream });
+    try obj.put(a, "model", .{ .string = request.model });
+    try obj.put(a, "stream", .{ .bool = stream });
 
     if (request.max_tokens) |mt| {
-        try obj.put("max_tokens", .{ .integer = @intCast(mt) });
+        try obj.put(a, "max_tokens", .{ .integer = @intCast(mt) });
     } else {
-        try obj.put("max_tokens", .{ .integer = 4096 });
+        try obj.put(a, "max_tokens", .{ .integer = 4096 });
     }
 
     // Anthropic uses separate system param; filter system messages out of messages array
     var msgs = std.json.Array.init(a);
     for (request.messages) |msg| {
         if (msg.role == .system) {
-            try obj.put("system", .{ .string = msg.content });
+            try obj.put(a, "system", .{ .string = msg.content });
             continue;
         }
-        var m = std.json.ObjectMap.init(a);
-        try m.put("role", .{ .string = @tagName(msg.role) });
-        try m.put("content", .{ .string = msg.content });
+        var m: std.json.ObjectMap = .empty;
+        try m.put(a, "role", .{ .string = @tagName(msg.role) });
+        try m.put(a, "content", .{ .string = msg.content });
         try msgs.append(.{ .object = m });
     }
-    try obj.put("messages", .{ .array = msgs });
+    try obj.put(a, "messages", .{ .array = msgs });
 
     // Tools
     if (request.tools) |tools| {
         var tools_arr = std.json.Array.init(a);
         for (tools) |tool| {
-            var t = std.json.ObjectMap.init(a);
-            try t.put("name", .{ .string = tool.name });
-            try t.put("description", .{ .string = tool.description });
+            var t: std.json.ObjectMap = .empty;
+            try t.put(a, "name", .{ .string = tool.name });
+            try t.put(a, "description", .{ .string = tool.description });
             const params_parsed = try std.json.parseFromSlice(std.json.Value, a, tool.parameters_schema, .{});
-            try t.put("input_schema", params_parsed.value);
+            try t.put(a, "input_schema", params_parsed.value);
             try tools_arr.append(.{ .object = t });
         }
-        try obj.put("tools", .{ .array = tools_arr });
+        try obj.put(a, "tools", .{ .array = tools_arr });
     }
 
     const val = std.json.Value{ .object = obj };

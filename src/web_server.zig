@@ -39,7 +39,7 @@ pub const WebConfigServer = struct {
 
     pub fn stop(self: *WebConfigServer) void {
         self.running.store(false, .release);
-        const addr = net.Address.parseIp("127.0.0.1", self.port) catch return;
+        const addr = std.Io.net.IpAddress.parseIp4("127.0.0.1", self.port) catch return;
         const stream = net.tcpConnectToAddress(addr) catch return;
         stream.close();
     }

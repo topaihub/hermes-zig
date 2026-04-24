@@ -86,7 +86,7 @@ pub const OpenAICompatClient = struct {
 
         var response = CompletionResponse{ .arena = arena };
         if (bodyLooksLikeSse(resp.body)) {
-            var content_buf = std.ArrayList(u8){};
+            var content_buf: std.ArrayList(u8) = .empty;
             defer content_buf.deinit(a);
 
             var sse = streaming.SseParser.init(a);
@@ -160,10 +160,10 @@ pub const OpenAICompatClient = struct {
         });
         _ = &resp;
 
-        var content_buf = std.ArrayList(u8){};
+        var content_buf: std.ArrayList(u8) = .empty;
         defer content_buf.deinit(a);
 
-        var tool_calls = std.ArrayList(interface.ToolCall){};
+        var tool_calls: std.ArrayList(interface.ToolCall) = .empty;
         defer tool_calls.deinit(a);
 
         var usage = TokenUsage{};
@@ -277,13 +277,13 @@ fn parseWireApi(wire_api: []const u8) WireApi {
 }
 
 fn bodyLooksLikeSse(body: []const u8) bool {
-    const trimmed = std.mem.trimLeft(u8, body, " \t\r\n");
+    const trimmed = std.mem.trimStart(u8, body, " \t\r\n");
     return std.mem.startsWith(u8, trimmed, "data:") or std.mem.startsWith(u8, trimmed, "event:");
 }
 
 fn looksLikeCompactionSummary(content: ?[]const u8) bool {
     const text = content orelse return false;
-    const trimmed = std.mem.trimLeft(u8, text, " \t\r\n");
+    const trimmed = std.mem.trimStart(u8, text, " \t\r\n");
     return std.mem.startsWith(u8, trimmed, "CONTEXT_COMPACTION_SUMMARY_V1");
 }
 
@@ -343,46 +343,46 @@ fn collectChatCompletionsPayload(
 }
 
 fn buildChatCompletionsRequestBody(a: std.mem.Allocator, request: CompletionRequest, stream: bool) ![]const u8 {
-    var obj = std.json.ObjectMap.init(a);
+    var obj: std.json.ObjectMap = .empty;
 
-    try obj.put("model", .{ .string = request.model });
-    try obj.put("stream", .{ .bool = stream });
+    try obj.put(a, "model", .{ .string = request.model });
+    try obj.put(a, "stream", .{ .bool = stream });
 
     // temperature
     const temp_str = try std.fmt.allocPrint(a, "{d:.1}", .{request.temperature});
-    try obj.put("temperature", .{ .number_string = temp_str });
+    try obj.put(a, "temperature", .{ .number_string = temp_str });
 
     if (request.max_tokens) |mt| {
-        try obj.put("max_tokens", .{ .integer = @intCast(mt) });
+        try obj.put(a, "max_tokens", .{ .integer = @intCast(mt) });
     }
 
     // messages array
     var msgs = std.json.Array.init(a);
     for (request.messages) |msg| {
-        var m = std.json.ObjectMap.init(a);
-        try m.put("role", .{ .string = @tagName(msg.role) });
-        try m.put("content", .{ .string = msg.content });
-        if (msg.tool_call_id) |id| try m.put("tool_call_id", .{ .string = id });
-        if (msg.name) |n| try m.put("name", .{ .string = n });
+        var m: std.json.ObjectMap = .empty;
+        try m.put(a, "role", .{ .string = @tagName(msg.role) });
+        try m.put(a, "content", .{ .string = msg.content });
+        if (msg.tool_call_id) |id| try m.put(a, "tool_call_id", .{ .string = id });
+        if (msg.name) |n| try m.put(a, "name", .{ .string = n });
         try msgs.append(.{ .object = m });
     }
-    try obj.put("messages", .{ .array = msgs });
+    try obj.put(a, "messages", .{ .array = msgs });
 
     // tools
     if (request.tools) |tools| {
         var tools_arr = std.json.Array.init(a);
         for (tools) |tool| {
-            var t = std.json.ObjectMap.init(a);
-            try t.put("type", .{ .string = "function" });
-            var func = std.json.ObjectMap.init(a);
-            try func.put("name", .{ .string = tool.name });
-            try func.put("description", .{ .string = tool.description });
+            var t: std.json.ObjectMap = .empty;
+            try t.put(a, "type", .{ .string = "function" });
+            var func: std.json.ObjectMap = .empty;
+            try func.put(a, "name", .{ .string = tool.name });
+            try func.put(a, "description", .{ .string = tool.description });
             const params_parsed = try std.json.parseFromSlice(std.json.Value, a, tool.parameters_schema, .{});
-            try func.put("parameters", params_parsed.value);
-            try t.put("function", .{ .object = func });
+            try func.put(a, "parameters", params_parsed.value);
+            try t.put(a, "function", .{ .object = func });
             try tools_arr.append(.{ .object = t });
         }
-        try obj.put("tools", .{ .array = tools_arr });
+        try obj.put(a, "tools", .{ .array = tools_arr });
     }
 
     const val = std.json.Value{ .object = obj };
@@ -394,67 +394,67 @@ fn buildResponsesRequestBody(a: std.mem.Allocator, request: CompletionRequest) !
 }
 
 fn buildResponsesRequestBodyWithStream(a: std.mem.Allocator, request: CompletionRequest, stream: bool) ![]const u8 {
-    var obj = std.json.ObjectMap.init(a);
+    var obj: std.json.ObjectMap = .empty;
 
-    try obj.put("model", .{ .string = request.model });
-    try obj.put("stream", .{ .bool = stream });
+    try obj.put(a, "model", .{ .string = request.model });
+    try obj.put(a, "stream", .{ .bool = stream });
 
     const temp_str = try std.fmt.allocPrint(a, "{d:.1}", .{request.temperature});
-    try obj.put("temperature", .{ .number_string = temp_str });
+    try obj.put(a, "temperature", .{ .number_string = temp_str });
 
     var input = std.json.Array.init(a);
     for (request.messages) |msg| {
         switch (msg.role) {
             .system, .user => {
-                var message = std.json.ObjectMap.init(a);
-                try message.put("role", .{ .string = @tagName(msg.role) });
-                try message.put("content", .{ .string = msg.content });
+                var message: std.json.ObjectMap = .empty;
+                try message.put(a, "role", .{ .string = @tagName(msg.role) });
+                try message.put(a, "content", .{ .string = msg.content });
                 try input.append(.{ .object = message });
             },
             .assistant => {
                 if (msg.content.len == 0) continue;
-                var message = std.json.ObjectMap.init(a);
-                try message.put("type", .{ .string = "message" });
-                try message.put("role", .{ .string = "assistant" });
-                try message.put("status", .{ .string = "completed" });
+                var message: std.json.ObjectMap = .empty;
+                try message.put(a, "type", .{ .string = "message" });
+                try message.put(a, "role", .{ .string = "assistant" });
+                try message.put(a, "status", .{ .string = "completed" });
 
                 var content = std.json.Array.init(a);
-                var text = std.json.ObjectMap.init(a);
-                try text.put("type", .{ .string = "output_text" });
-                try text.put("text", .{ .string = msg.content });
+                var text: std.json.ObjectMap = .empty;
+                try text.put(a, "type", .{ .string = "output_text" });
+                try text.put(a, "text", .{ .string = msg.content });
                 try content.append(.{ .object = text });
-                try message.put("content", .{ .array = content });
+                try message.put(a, "content", .{ .array = content });
                 try input.append(.{ .object = message });
             },
             .tool => {
                 const call_id = msg.tool_call_id orelse continue;
-                var tool_output = std.json.ObjectMap.init(a);
-                try tool_output.put("type", .{ .string = "function_call_output" });
-                try tool_output.put("call_id", .{ .string = call_id });
-                try tool_output.put("output", .{ .string = msg.content });
+                var tool_output: std.json.ObjectMap = .empty;
+                try tool_output.put(a, "type", .{ .string = "function_call_output" });
+                try tool_output.put(a, "call_id", .{ .string = call_id });
+                try tool_output.put(a, "output", .{ .string = msg.content });
                 try input.append(.{ .object = tool_output });
             },
         }
     }
-    try obj.put("input", .{ .array = input });
+    try obj.put(a, "input", .{ .array = input });
 
     if (request.max_tokens) |mt| {
-        try obj.put("max_output_tokens", .{ .integer = @intCast(mt) });
+        try obj.put(a, "max_output_tokens", .{ .integer = @intCast(mt) });
     }
 
     if (request.tools) |tools| {
         var tools_arr = std.json.Array.init(a);
         for (tools) |tool| {
-            var t = std.json.ObjectMap.init(a);
-            try t.put("type", .{ .string = "function" });
-            try t.put("name", .{ .string = tool.name });
-            try t.put("description", .{ .string = tool.description });
-            try t.put("strict", .{ .bool = true });
+            var t: std.json.ObjectMap = .empty;
+            try t.put(a, "type", .{ .string = "function" });
+            try t.put(a, "name", .{ .string = tool.name });
+            try t.put(a, "description", .{ .string = tool.description });
+            try t.put(a, "strict", .{ .bool = true });
             const params_parsed = try std.json.parseFromSlice(std.json.Value, a, tool.parameters_schema, .{});
-            try t.put("parameters", params_parsed.value);
+            try t.put(a, "parameters", params_parsed.value);
             try tools_arr.append(.{ .object = t });
         }
-        try obj.put("tools", .{ .array = tools_arr });
+        try obj.put(a, "tools", .{ .array = tools_arr });
     }
 
     const val = std.json.Value{ .object = obj };
@@ -566,8 +566,8 @@ fn parseResponsesBody(a: std.mem.Allocator, body: []const u8, response: *Complet
     const output = root.object.get("output") orelse return;
     if (output != .array) return;
 
-    var content_buf = std.ArrayList(u8){};
-    var tool_calls = std.ArrayList(interface.ToolCall){};
+    var content_buf: std.ArrayList(u8) = .empty;
+    var tool_calls: std.ArrayList(interface.ToolCall) = .empty;
 
     for (output.array.items) |item| {
         if (item != .object) continue;
@@ -710,11 +710,11 @@ test "parseResponsesBody extracts text and tool calls" {
 }
 
 test "collectResponsesItem does not duplicate streamed text" {
-    var content_buf = std.ArrayList(u8){};
+    var content_buf: std.ArrayList(u8) = .empty;
     defer content_buf.deinit(std.testing.allocator);
     try content_buf.appendSlice(std.testing.allocator, "ok");
 
-    var tool_calls = std.ArrayList(interface.ToolCall){};
+    var tool_calls: std.ArrayList(interface.ToolCall) = .empty;
     defer tool_calls.deinit(std.testing.allocator);
 
     var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator,
@@ -780,7 +780,7 @@ test "parseCompatBody accepts chat completions payload" {
 }
 
 test "collectChatCompletionsPayload extracts streaming delta content" {
-    var content_buf = std.ArrayList(u8){};
+    var content_buf: std.ArrayList(u8) = .empty;
     defer content_buf.deinit(std.testing.allocator);
 
     var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator,

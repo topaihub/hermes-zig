@@ -2,7 +2,7 @@ const std = @import("std");
 
 /// Parse a single SSE line. Returns the data payload, or null for non-data/done lines.
 pub fn parseSseLine(line: []const u8) ?[]const u8 {
-    const trimmed = std.mem.trimRight(u8, line, "\r\n");
+    const trimmed = std.mem.trimEnd(u8, line, "\r\n");
     if (!std.mem.startsWith(u8, trimmed, "data: ")) return null;
     const payload = trimmed["data: ".len..];
     if (std.mem.eql(u8, payload, "[DONE]")) return null;
@@ -10,7 +10,7 @@ pub fn parseSseLine(line: []const u8) ?[]const u8 {
 }
 
 pub const SseParser = struct {
-    buffer: std.ArrayList(u8) = .{},
+    buffer: std.ArrayList(u8) = .empty,
     alloc: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) SseParser {
@@ -24,7 +24,7 @@ pub const SseParser = struct {
     /// Feed raw bytes, returns a list of complete data payloads.
     pub fn feed(self: *SseParser, bytes: []const u8, allocator: std.mem.Allocator) ![][]const u8 {
         try self.buffer.appendSlice(self.alloc, bytes);
-        var results = std.ArrayList([]const u8){};
+        var results: std.ArrayList([]const u8) = .empty;
 
         while (true) {
             const buf = self.buffer.items;
