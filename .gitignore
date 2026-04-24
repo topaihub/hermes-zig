@@ -1,3 +1,12 @@
 .zig-cache/
+.zig-cache-global/
 zig-out/
+zig-pkg/
 *.o
+*.obj
+*.exe
+*.pdb
+*.wasm
+test_*.zig
+cron_scheduler.obj
+docs/
