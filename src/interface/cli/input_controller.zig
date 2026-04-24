@@ -163,7 +163,7 @@ const Editor = struct {
     rendered_menu_lines: usize = 0,
 
     fn deinit(self: *Editor) void {
-        self.buffer.deinit();
+        self.buffer.deinit(self.allocator);
     }
 
     fn appendText(self: *Editor, text: []const u8) !void {
