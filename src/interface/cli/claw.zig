@@ -13,7 +13,7 @@ pub fn detectOpenClaw(allocator: Allocator) !bool {
     return true;
 }
 
-pub fn handleClawCommand(allocator: Allocator, args: []const u8, stdout: std.fs.File) !void {
+pub fn handleClawCommand(allocator: Allocator, args: []const u8, stdout: std.Io.File) !void {
     if (std.mem.eql(u8, args, "migrate --dry-run")) {
         if (try detectOpenClaw(allocator)) {
             try stdout.writeAll("  [dry-run] Would migrate ~/.openclaw files.\n");

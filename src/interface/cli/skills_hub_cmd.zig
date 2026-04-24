@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-pub fn handleSkillsHubCommand(allocator: Allocator, args: []const u8, stdout: std.fs.File) !void {
+pub fn handleSkillsHubCommand(allocator: Allocator, args: []const u8, stdout: std.Io.File) !void {
     if (args.len == 0 or std.mem.eql(u8, args, "list")) {
         try stdout.writeAll("  No skills installed.\n");
     } else if (std.mem.startsWith(u8, args, "search ")) {

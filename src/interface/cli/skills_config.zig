@@ -22,8 +22,8 @@ const ActionResult = struct {
 
 pub fn handleSkillsCommand(
     allocator: Allocator,
-    stdin: std.fs.File,
-    stdout: std.fs.File,
+    stdin: std.Io.File,
+    stdout: std.Io.File,
     skills_runtime: *SkillsRuntime,
 ) !void {
     try skills_runtime.reload();
@@ -31,7 +31,12 @@ pub fn handleSkillsCommand(
     if (!cli.canUseInteractiveInput(stdin, stdout) or !skills_runtime.hasInstalledSkills()) {
         const output = try renderSkillsStateAlloc(allocator, skills_runtime);
         defer allocator.free(output);
-        try stdout.writeAll(output);
+        
+        var io_threaded: std.Io.Threaded = .init_single_threaded;
+        const io_instance = io_threaded.io();
+        var buf: [4096]u8 = undefined;
+        var writer = stdout.writer(io_instance, &buf);
+        try writer.interface.writeAll(output);
         return;
     }
 
@@ -40,25 +45,35 @@ pub fn handleSkillsCommand(
 
 pub fn renderSkillsDirectory(
     allocator: Allocator,
-    stdout: std.fs.File,
+    stdout: std.Io.File,
     skills_runtime: *SkillsRuntime,
 ) !void {
     const msg = try std.fmt.allocPrint(allocator, "\n  \x1b[1mSkills Directory:\x1b[0m\n    {s}\n\n", .{skills_runtime.skills_dir});
     defer allocator.free(msg);
-    try stdout.writeAll(msg);
+    
+    var io_threaded: std.Io.Threaded = .init_single_threaded;
+    const io_instance = io_threaded.io();
+    var buf: [4096]u8 = undefined;
+    var writer = stdout.writer(io_instance, &buf);
+    try writer.interface.writeAll(msg);
 }
 
 pub fn renderSkillView(
     allocator: Allocator,
-    stdout: std.fs.File,
+    stdout: std.Io.File,
     skills_runtime: *SkillsRuntime,
     name: []const u8,
 ) !void {
+    var io_threaded: std.Io.Threaded = .init_single_threaded;
+    const io_instance = io_threaded.io();
+    var buf: [4096]u8 = undefined;
+    var writer = stdout.writer(io_instance, &buf);
+    
     try skills_runtime.reload();
     const skill = skills_runtime.findInstalled(name) orelse {
         const msg = try std.fmt.allocPrint(allocator, "\n  Skill not found: {s}\n\n", .{name});
         defer allocator.free(msg);
-        try stdout.writeAll(msg);
+        try writer.interface.writeAll(msg);
         return;
     };
 
@@ -73,41 +88,52 @@ pub fn renderSkillView(
         },
     );
     defer allocator.free(header);
-    try stdout.writeAll(header);
+    try writer.interface.writeAll(header);
 }
 
 pub fn activateSkill(
     allocator: Allocator,
-    stdout: std.fs.File,
+    stdout: std.Io.File,
     skills_runtime: *SkillsRuntime,
     name: []const u8,
 ) !void {
+    var io_threaded: std.Io.Threaded = .init_single_threaded;
+    const io_instance = io_threaded.io();
+    var buf: [4096]u8 = undefined;
+    var writer = stdout.writer(io_instance, &buf);
+    
     try skills_runtime.reload();
     if (!(try skills_runtime.activate(name))) {
         const msg = try std.fmt.allocPrint(allocator, "\n  Skill not found: {s}\n\n", .{name});
         defer allocator.free(msg);
-        try stdout.writeAll(msg);
+        try writer.interface.writeAll(msg);
         return;
     }
     const msg = try std.fmt.allocPrint(allocator, "\n  Activated skill: {s}\n\n", .{skills_runtime.active.?.name});
     defer allocator.free(msg);
-    try stdout.writeAll(msg);
+    try writer.interface.writeAll(msg);
 }
 
 pub fn clearActiveSkill(
     allocator: Allocator,
-    stdout: std.fs.File,
+    stdout: std.Io.File,
     skills_runtime: *SkillsRuntime,
 ) !void {
     _ = allocator;
     skills_runtime.clearActive();
-    try stdout.writeAll("\n  Cleared active skill for this session.\n\n");
+    
+    var io_threaded: std.Io.Threaded = .init_single_threaded;
+    const io_instance = io_threaded.io();
+    var buf: [4096]u8 = undefined;
+    var writer = stdout.writer(io_instance, &buf);
+    try writer.interface.writeAll("\n  Cleared active skill for this session.\n\n");
 }
 
 fn renderSkillsStateAlloc(allocator: Allocator, skills_runtime: *const SkillsRuntime) ![]u8 {
-    var out = std.ArrayList(u8){};
+    var out: std.ArrayList(u8) = .empty;
     defer out.deinit(allocator);
-    const w = out.writer(allocator);
+    var out_writer: std.Io.Writer.Allocating = .fromArrayList(allocator, &out);
+    const w = &out_writer.writer;
 
     try w.writeAll("\n  \x1b[1mSkills:\x1b[0m\n");
     if (!skills_runtime.hasInstalledSkills()) {
@@ -132,8 +158,8 @@ fn renderSkillsStateAlloc(allocator: Allocator, skills_runtime: *const SkillsRun
 
 fn runInteractiveSkillsMenu(
     allocator: Allocator,
-    stdin: std.fs.File,
-    stdout: std.fs.File,
+    stdin: std.Io.File,
+    stdout: std.Io.File,
     skills_runtime: *SkillsRuntime,
 ) !void {
     var selected_index: usize = 0;
@@ -171,12 +197,16 @@ fn runInteractiveSkillsMenu(
     }
 
     if (changed) {
-        try stdout.writeAll("\n  Skills session state updated.\n\n");
+        var io_threaded: std.Io.Threaded = .init_single_threaded;
+        const io_instance = io_threaded.io();
+        var buf: [4096]u8 = undefined;
+        var writer = stdout.writer(io_instance, &buf);
+        try writer.interface.writeAll("\n  Skills session state updated.\n\n");
     }
 }
 
 fn buildMenuEntries(allocator: Allocator, skills_runtime: *const SkillsRuntime) ![]MenuEntry {
-    var entries = std.ArrayList(MenuEntry){};
+    var entries: std.ArrayList(MenuEntry) = .empty;
     errdefer {
         for (entries.items) |entry| allocator.free(entry.label);
         entries.deinit(allocator);

@@ -167,12 +167,17 @@ fn createConfigFile(config_path: []const u8, allocator: std.mem.Allocator) !std.
 }
 
 fn readConfigFileAlloc(allocator: std.mem.Allocator, config_path: []const u8, max_bytes: usize) ![]u8 {
+    var io_threaded: std.Io.Threaded = .init_single_threaded;
+    const io_instance = io_threaded.io();
+    
     if (std.fs.path.isAbsolute(config_path)) {
-        const file = try std.fs.openFileAbsolute(config_path, .{});
-        defer file.close();
-        return file.readToEndAlloc(allocator, max_bytes);
+        const file = try std.Io.Dir.openFileAbsolute(io_instance, config_path, .{});
+        defer file.close(io_instance);
+        var stream_buf: [4096]u8 = undefined;
+        var reader = file.readerStreaming(io_instance, &stream_buf);
+        return try reader.interface.allocRemaining(allocator, .limited(max_bytes));
     }
-    return std.fs.cwd().readFileAlloc(allocator, config_path, max_bytes);
+    return std.Io.Dir.cwd().readFileAlloc(io_instance, config_path, allocator, @enumFromInt(max_bytes));
 }
 
 fn saveConfigAlloc(allocator: std.mem.Allocator, config_path: []const u8, cfg: core.Config) !void {
@@ -663,8 +668,8 @@ pub fn main() !void {
 fn handleCommand(
     allocator: std.mem.Allocator,
     input: []const u8,
-    stdout: std.fs.File,
-    stdin: std.fs.File,
+    stdout: std.Io.File,
+    stdin: std.Io.File,
     config_path: []const u8,
     cfg: *core.Config,
     loaded_cfg: *?core.LoadedConfig,
@@ -774,8 +779,10 @@ fn handleCommand(
             return .continue_session;
         },
         .help => {
+            var io_threaded: std.Io.Threaded = .init_single_threaded;
+            const io_instance = io_threaded.io();
             var buf: [8192]u8 = undefined;
-            var writer = stdout.writer(&buf);
+            var writer = stdout.writer(io_instance, &buf);
             try interface.cli.commands.renderHelp(&writer.interface);
             try writer.interface.flush();
             return .continue_session;
@@ -1057,7 +1064,7 @@ fn usesJsonLogFormat(log_format: []const u8) bool {
     return std.mem.eql(u8, log_format, "json") or std.mem.eql(u8, log_format, "both");
 }
 
-fn showConfig(allocator: std.mem.Allocator, stdout: std.fs.File, config_path: []const u8) !void {
+fn showConfig(allocator: std.mem.Allocator, stdout: std.Io.File, config_path: []const u8) !void {
     const content = readConfigFileAlloc(allocator, config_path, 64 * 1024) catch |err| {
         try writeF(stdout, allocator, "\n  No config found: {s}\n\n", .{@errorName(err)});
         return;

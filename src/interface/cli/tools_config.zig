@@ -2,6 +2,7 @@ const std = @import("std");
 const core = @import("../../core/root.zig");
 const cli = @import("root.zig");
 const tools_runtime_mod = @import("tools_runtime.zig");
+const compat = @import("../../compat/root.zig");
 
 const Allocator = std.mem.Allocator;
 const ToolsRuntime = tools_runtime_mod.ToolsRuntime;
@@ -10,8 +11,8 @@ const ToolState = tools_runtime_mod.ToolState;
 pub fn handleToolsCommand(
     allocator: Allocator,
     args: []const u8,
-    stdin: std.fs.File,
-    stdout: std.fs.File,
+    stdin: std.Io.File,
+    stdout: std.Io.File,
     cfg: *core.Config,
     config_path: []const u8,
     tools_runtime: *ToolsRuntime,
@@ -44,36 +45,48 @@ pub fn handleToolsCommand(
         return;
     }
 
-    try stdout.writeAll("\n  Usage:\n");
-    try stdout.writeAll("    /tools           Open interactive tool toggler or show tool state\n");
-    try stdout.writeAll("    /tools list      Show effective enabled and disabled tools\n");
-    try stdout.writeAll("    /tools enable <name>\n");
-    try stdout.writeAll("    /tools disable <name>\n\n");
+    var io_threaded: std.Io.Threaded = .init_single_threaded;
+    const io_instance = io_threaded.io();
+    var buf: [4096]u8 = undefined;
+    var writer = stdout.writer(io_instance, &buf);
+    
+    try writer.interface.writeAll("\n  Usage:\n");
+    try writer.interface.writeAll("    /tools           Open interactive tool toggler or show tool state\n");
+    try writer.interface.writeAll("    /tools list      Show effective enabled and disabled tools\n");
+    try writer.interface.writeAll("    /tools enable <name>\n");
+    try writer.interface.writeAll("    /tools disable <name>\n\n");
+    try writer.interface.flush();
 }
 
 fn renderToolsState(
     allocator: Allocator,
-    stdout: std.fs.File,
+    stdout: std.Io.File,
     cfg: *const core.Config,
     tools_runtime: *ToolsRuntime,
 ) !void {
     const states = try tools_runtime.listStates(allocator, cfg);
     defer allocator.free(states);
 
-    try stdout.writeAll("\n  \x1b[1mTools:\x1b[0m\n");
+    var io_threaded: std.Io.Threaded = .init_single_threaded;
+    const io_instance = io_threaded.io();
+    var buf: [4096]u8 = undefined;
+    var writer = stdout.writer(io_instance, &buf);
+    
+    try writer.interface.writeAll("\n  \x1b[1mTools:\x1b[0m\n");
     for (states) |state| {
         const status = if (state.enabled) "\x1b[32menabled\x1b[0m" else "\x1b[90mdisabled\x1b[0m";
         const line = try std.fmt.allocPrint(allocator, "    • {s:<16} [{s}]\n", .{ state.name, status });
         defer allocator.free(line);
-        try stdout.writeAll(line);
+        try writer.interface.writeAll(line);
     }
-    try stdout.writeAll("\n");
+    try writer.interface.writeAll("\n");
+    try writer.interface.flush();
 }
 
 fn runInteractiveToolsMenu(
     allocator: Allocator,
-    stdin: std.fs.File,
-    stdout: std.fs.File,
+    stdin: std.Io.File,
+    stdout: std.Io.File,
     cfg: *core.Config,
     config_path: []const u8,
     tools_runtime: *ToolsRuntime,
@@ -121,13 +134,18 @@ fn runInteractiveToolsMenu(
     }
 
     if (changed) {
-        try stdout.writeAll("\n  Tool configuration updated.\n\n");
+        var io_threaded: std.Io.Threaded = .init_single_threaded;
+        const io_instance = io_threaded.io();
+        var buf: [4096]u8 = undefined;
+        var writer = stdout.writer(io_instance, &buf);
+        try writer.interface.writeAll("\n  Tool configuration updated.\n\n");
+        try writer.interface.flush();
     }
 }
 
 fn setToolStateAndReport(
     allocator: Allocator,
-    stdout: std.fs.File,
+    stdout: std.Io.File,
     cfg: *core.Config,
     config_path: []const u8,
     tools_runtime: *ToolsRuntime,
@@ -137,6 +155,11 @@ fn setToolStateAndReport(
     const label = try mutateToolState(allocator, cfg, config_path, tools_runtime, name, enabled);
     defer allocator.free(label);
 
+    var io_threaded: std.Io.Threaded = .init_single_threaded;
+    const io_instance = io_threaded.io();
+    var buf: [4096]u8 = undefined;
+    var writer = stdout.writer(io_instance, &buf);
+
     if (label.len == 0) {
         const unchanged = try std.fmt.allocPrint(
             allocator,
@@ -144,13 +167,15 @@ fn setToolStateAndReport(
             .{ name, if (enabled) "enabled" else "disabled" },
         );
         defer allocator.free(unchanged);
-        try stdout.writeAll(unchanged);
+        try writer.interface.writeAll(unchanged);
+        try writer.interface.flush();
         return;
     }
 
     const msg = try std.fmt.allocPrint(allocator, "\n  {s}.\n\n", .{label});
     defer allocator.free(msg);
-    try stdout.writeAll(msg);
+    try writer.interface.writeAll(msg);
+    try writer.interface.flush();
 }
 
 fn mutateToolState(
@@ -205,11 +230,12 @@ fn freeOwnedStrings(allocator: Allocator, items: [][]u8) void {
     allocator.free(items);
 }
 
-fn createConfigFile(config_path: []const u8) !std.fs.File {
+fn createConfigFile(config_path: []const u8) !compat.fs.File {
     if (std.fs.path.isAbsolute(config_path)) {
-        return std.fs.createFileAbsolute(config_path, .{});
+        return compat.fs.createFileAbsolute(config_path, .{});
     }
-    return std.fs.cwd().createFile(config_path, .{});
+    const cwd = compat.fs.cwd();
+    return cwd.createFile(config_path, .{});
 }
 
 fn saveConfigAlloc(allocator: Allocator, config_path: []const u8, cfg: core.Config) !void {

@@ -7,13 +7,16 @@ const tui = @import("tui.zig");
 const windows = std.os.windows;
 const kernel32 = windows.kernel32;
 
+extern "kernel32" fn GetStdHandle(nStdHandle: windows.DWORD) callconv(.winapi) ?windows.HANDLE;
 extern "kernel32" fn GetConsoleMode(hConsoleHandle: windows.HANDLE, lpMode: *windows.DWORD) callconv(.winapi) windows.BOOL;
 extern "kernel32" fn SetConsoleMode(hConsoleHandle: windows.HANDLE, dwMode: windows.DWORD) callconv(.winapi) windows.BOOL;
 
+const STD_OUTPUT_HANDLE: windows.DWORD = @bitCast(@as(i32, -11));
 const KEY_EVENT: windows.WORD = 0x0001;
 const ENABLE_PROCESSED_INPUT: windows.DWORD = 0x0001;
 const ENABLE_LINE_INPUT: windows.DWORD = 0x0002;
 const ENABLE_ECHO_INPUT: windows.DWORD = 0x0004;
+const ENABLE_VIRTUAL_TERMINAL_PROCESSING: windows.DWORD = 0x0004;
 
 const VK_TAB: windows.WORD = 0x09;
 const VK_RETURN: windows.WORD = 0x0D;
@@ -49,18 +52,27 @@ extern "kernel32" fn ReadConsoleInputW(
     lpNumberOfEventsRead: *windows.DWORD,
 ) callconv(.winapi) windows.BOOL;
 
+fn enableWindowsVT100() bool {
+    if (builtin.os.tag != .windows) return true;
+    const handle = GetStdHandle(STD_OUTPUT_HANDLE) orelse return false;
+    var mode: windows.DWORD = 0;
+    if (GetConsoleMode(handle, &mode) == .FALSE) return false;
+    mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+    return SetConsoleMode(handle, mode) != .FALSE;
+}
+
 pub fn canUseInteractive(stdin: std.Io.File, stdout: std.Io.File) bool {
+    _ = stdout;
     if (builtin.os.tag == .windows) {
         var stdin_mode: windows.DWORD = 0;
         if (GetConsoleMode(stdin.handle, &stdin_mode) == .FALSE) return false;
-
-        var stdout_mode: windows.DWORD = 0;
-        if (GetConsoleMode(stdout.handle, &stdout_mode) == .FALSE) return false;
-
-        return stdout.getOrEnableAnsiEscapeSupport();
+        return enableWindowsVT100();
     }
 
-    return stdin.isTty() and stdout.getOrEnableAnsiEscapeSupport();
+    // Unix: 检查是否是 TTY
+    var io_threaded: std.Io.Threaded = .init_single_threaded;
+    const io_instance = io_threaded.io();
+    return stdin.toInner().isTty(io_instance) catch false;
 }
 
 pub fn readInputLine(
@@ -151,11 +163,11 @@ const Editor = struct {
     rendered_menu_lines: usize = 0,
 
     fn deinit(self: *Editor) void {
-        self.buffer.deinit();
+        self.buffer.deinit(self.allocator);
     }
 
     fn appendText(self: *Editor, text: []const u8) !void {
-        try self.buffer.appendSlice(text);
+        try self.buffer.appendSlice(self.allocator, text);
         self.refreshSuggestions();
     }
 
@@ -169,7 +181,7 @@ const Editor = struct {
 
     fn setBuffer(self: *Editor, value: []const u8) !void {
         self.buffer.clearRetainingCapacity();
-        try self.buffer.appendSlice(value);
+        try self.buffer.appendSlice(self.allocator, value);
         self.refreshSuggestions();
     }
 
@@ -202,10 +214,10 @@ const Editor = struct {
         if (!self.suggestions_visible or self.suggestion_count == 0) return;
         const spec = commands.allPrimarySpecs()[self.suggestions[self.selected_index]];
         self.buffer.clearRetainingCapacity();
-        try self.buffer.append('/');
-        try self.buffer.appendSlice(spec.literal);
+        try self.buffer.append(self.allocator, '/');
+        try self.buffer.appendSlice(self.allocator, spec.literal);
         if (spec.takes_arg) {
-            try self.buffer.append(' ');
+            try self.buffer.append(self.allocator, ' ');
         }
         self.refreshSuggestions();
     }
@@ -223,8 +235,8 @@ const Editor = struct {
 
 pub fn runSelectionMenu(
     allocator: std.mem.Allocator,
-    stdin: std.fs.File,
-    stdout: std.fs.File,
+    stdin: std.Io.File,
+    stdout: std.Io.File,
     title: []const u8,
     items: []const []const u8,
     selected_index: usize,
@@ -239,8 +251,8 @@ pub fn runSelectionMenu(
 
 fn readInteractiveWindows(
     allocator: std.mem.Allocator,
-    stdin: std.fs.File,
-    stdout: std.fs.File,
+    stdin: std.Io.File,
+    stdout: std.Io.File,
     history: *history_mod.History,
 ) !?[]u8 {
     const guard = try ConsoleInputModeGuard.enable(stdin);
@@ -248,7 +260,7 @@ fn readInteractiveWindows(
 
     var editor = Editor{ 
         .allocator = allocator,
-        .buffer = std.ArrayList(u8).init(allocator),
+        .buffer = std.ArrayList(u8).empty,
     };
     defer editor.deinit();
 
@@ -294,8 +306,8 @@ fn readInteractiveWindows(
 
 fn readInteractivePosix(
     allocator: std.mem.Allocator,
-    stdin: std.fs.File,
-    stdout: std.fs.File,
+    stdin: std.Io.File,
+    stdout: std.Io.File,
     history: *history_mod.History,
 ) !?[]u8 {
     const raw = try tui.RawMode.enable(stdin.handle);
@@ -304,7 +316,7 @@ fn readInteractivePosix(
     const reader = tui.InputReader{ .fd = stdin.handle };
     var editor = Editor{ 
         .allocator = allocator,
-        .buffer = std.ArrayList(u8).init(allocator),
+        .buffer = std.ArrayList(u8).empty,
     };
     defer editor.deinit();
 
@@ -350,8 +362,8 @@ fn readInteractivePosix(
 
 fn runSelectionMenuWindows(
     allocator: std.mem.Allocator,
-    stdin: std.fs.File,
-    stdout: std.fs.File,
+    stdin: std.Io.File,
+    stdout: std.Io.File,
     title: []const u8,
     items: []const []const u8,
     selected_index: usize,
@@ -383,8 +395,8 @@ fn runSelectionMenuWindows(
 
 fn runSelectionMenuPosix(
     allocator: std.mem.Allocator,
-    stdin: std.fs.File,
-    stdout: std.fs.File,
+    stdin: std.Io.File,
+    stdout: std.Io.File,
     title: []const u8,
     items: []const []const u8,
     selected_index: usize,
@@ -415,14 +427,16 @@ fn runSelectionMenuPosix(
     }
 }
 
-fn finalizeEditor(allocator: std.mem.Allocator, stdout: std.fs.File, editor: *Editor) ![]u8 {
+fn finalizeEditor(allocator: std.mem.Allocator, stdout: std.Io.File, editor: *Editor) ![]u8 {
     try clearRenderedArea(stdout, editor.rendered_menu_lines);
     const line = try editor.buffer.toOwnedSlice(allocator);
-    editor.buffer = .{};
+    editor.buffer = std.ArrayList(u8).empty;
     editor.rendered_menu_lines = 0;
 
+    var io_threaded: std.Io.Threaded = .init_single_threaded;
+    const io_instance = io_threaded.io();
     var buf: [4096]u8 = undefined;
-    var writer = stdout.writer(&buf);
+    var writer = stdout.writer(io_instance, &buf);
     try tui.renderPrompt(&writer.interface);
     try writer.interface.writeAll(line);
     try writer.interface.writeAll("\n");
@@ -431,7 +445,7 @@ fn finalizeEditor(allocator: std.mem.Allocator, stdout: std.fs.File, editor: *Ed
 }
 
 fn renderSelectionMenu(
-    stdout: std.fs.File,
+    stdout: std.Io.File,
     title: []const u8,
     items: []const []const u8,
     selector: *const Selector,
@@ -439,8 +453,10 @@ fn renderSelectionMenu(
 ) !usize {
     try clearRenderedArea(stdout, previous_lines);
 
+    var io_threaded: std.Io.Threaded = .init_single_threaded;
+    const io_instance = io_threaded.io();
     var buf: [8192]u8 = undefined;
-    var writer = stdout.writer(&buf);
+    var writer = stdout.writer(io_instance, &buf);
     try writer.interface.writeAll("\r");
     try writer.interface.print("\x1b[1m{s}\x1b[0m", .{title});
 
@@ -464,10 +480,12 @@ fn renderSelectionMenu(
     return visible_count;
 }
 
-fn renderEditor(stdout: std.fs.File, editor: *Editor) !void {
+fn renderEditor(stdout: std.Io.File, editor: *Editor) !void {
     try clearRenderedArea(stdout, editor.rendered_menu_lines);
+    var io_threaded: std.Io.Threaded = .init_single_threaded;
+    const io_instance = io_threaded.io();
     var buf: [8192]u8 = undefined;
-    var writer = stdout.writer(&buf);
+    var writer = stdout.writer(io_instance, &buf);
     try tui.renderPrompt(&writer.interface);
     try writer.interface.writeAll(editor.buffer.items);
     const visible_count = editor.visibleSuggestionCount();
@@ -497,16 +515,23 @@ fn renderEditor(stdout: std.fs.File, editor: *Editor) !void {
     editor.rendered_menu_lines = visible_count;
 }
 
-fn clearRenderedArea(stdout: std.fs.File, rendered_menu_lines: usize) !void {
-    try stdout.writeAll("\r\x1b[2K");
+fn clearRenderedArea(stdout: std.Io.File, rendered_menu_lines: usize) !void {
+    var io_threaded: std.Io.Threaded = .init_single_threaded;
+    const io_instance = io_threaded.io();
+    var write_buf: [4096]u8 = undefined;
+    var bw = stdout.writer(io_instance, &write_buf);
+    const w = &bw.interface;
+    
+    try w.writeAll("\r\x1b[2K");
     for (0..rendered_menu_lines) |_| {
-        try stdout.writeAll("\n\r\x1b[2K");
+        try w.writeAll("\n\r\x1b[2K");
     }
     if (rendered_menu_lines > 0) {
         var buf: [32]u8 = undefined;
         const seq = try std.fmt.bufPrint(&buf, "\x1b[{d}A\r", .{rendered_menu_lines});
-        try stdout.writeAll(seq);
+        try w.writeAll(seq);
     }
+    try bw.flush();
 }
 
 fn truncatedSummary(summary: []const u8) []const u8 {
@@ -519,30 +544,37 @@ fn readLineFallback(allocator: std.mem.Allocator, stdin: std.Io.File) !?[]u8 {
     var out = std.ArrayList(u8).empty;
     defer out.deinit(allocator);
 
+    var io_threaded: std.Io.Threaded = .init_single_threaded;
+    const io_instance = io_threaded.io();
     var buf: [1]u8 = undefined;
     while (true) {
-        const n = try stdin.read(&buf);
+        const n = stdin.readStreaming(io_instance, &.{&buf}) catch |err| switch (err) {
+            error.EndOfStream => 0,
+            else => return err,
+        };
         if (n == 0) {
             if (out.items.len == 0) return null;
             break;
         }
         if (buf[0] == '\n') break;
-        if (buf[0] != '\r') try out.append(allocator, buf[0]);
+        if (buf[0] == '\r') continue;
+        try out.append(allocator, buf[0]);
     }
+
     return try out.toOwnedSlice(allocator);
 }
 
-fn readKeyWindows(allocator: std.mem.Allocator, stdin: std.fs.File) !Key {
+fn readKeyWindows(allocator: std.mem.Allocator, stdin: std.Io.File) !Key {
     while (true) {
         var record: InputRecord = undefined;
         var events_read: windows.DWORD = 0;
-        if (ReadConsoleInputW(stdin.handle, @ptrCast(&record), 1, &events_read) == 0 or events_read == 0) {
+        if (ReadConsoleInputW(stdin.handle, @ptrCast(&record), 1, &events_read) == .FALSE or events_read == 0) {
             return .unknown;
         }
         if (record.EventType != KEY_EVENT) continue;
 
         const key_event = record.Event.KeyEvent;
-        if (key_event.bKeyDown == 0) continue;
+        if (key_event.bKeyDown == .FALSE) continue;
 
         switch (key_event.wVirtualKeyCode) {
             VK_BACK => return .backspace,
@@ -595,14 +627,14 @@ const ConsoleInputModeGuard = struct {
     original_mode: windows.DWORD,
     enabled: bool,
 
-    fn enable(stdin: std.fs.File) !ConsoleInputModeGuard {
+    fn enable(stdin: std.Io.File) !ConsoleInputModeGuard {
         var original_mode: windows.DWORD = 0;
-        if (kernel32.GetConsoleMode(stdin.handle, &original_mode) == 0) {
+        if (GetConsoleMode(stdin.handle, &original_mode) == .FALSE) {
             return .{ .handle = stdin.handle, .original_mode = 0, .enabled = false };
         }
 
         const new_mode = original_mode & ~(ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
-        if (kernel32.SetConsoleMode(stdin.handle, new_mode) == 0) {
+        if (SetConsoleMode(stdin.handle, new_mode) == .FALSE) {
             return .{ .handle = stdin.handle, .original_mode = original_mode, .enabled = false };
         }
 
@@ -615,7 +647,7 @@ const ConsoleInputModeGuard = struct {
 
     fn disable(self: ConsoleInputModeGuard) void {
         if (!self.enabled) return;
-        _ = kernel32.SetConsoleMode(self.handle, self.original_mode);
+        _ = SetConsoleMode(self.handle, self.original_mode);
     }
 };
 

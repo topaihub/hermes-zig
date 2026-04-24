@@ -16,7 +16,7 @@ pub const History = struct {
 
     pub fn add(self: *History, line: []const u8) !void {
         const owned = try self.allocator.dupe(u8, line);
-        try self.entries.append(owned);
+        try self.entries.append(self.allocator, owned);
         self.pos = self.entries.items.len;
     }
 

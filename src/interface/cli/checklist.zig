@@ -5,7 +5,7 @@ pub const ChecklistItem = struct {
     checked: bool = false,
 };
 
-pub fn runChecklist(allocator: std.mem.Allocator, items: []ChecklistItem, stdout: std.fs.File, stdin: std.fs.File) !void {
+pub fn runChecklist(allocator: std.mem.Allocator, items: []ChecklistItem, stdout: std.Io.File, stdin: std.Io.File) !void {
     var buf: [64]u8 = undefined;
     while (true) {
         for (items, 1..) |item, i| {

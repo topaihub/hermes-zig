@@ -2,10 +2,10 @@ const std = @import("std");
 const interface = @import("../llm/interface.zig");
 
 pub const CliStreamCallback = struct {
-    stdout: std.fs.File,
+    stdout: std.Io.File,
 
     pub fn init() CliStreamCallback {
-        return .{ .stdout = std.fs.File.stdout() };
+        return .{ .stdout = std.Io.File.stdout() };
     }
 
     pub fn asStreamCallback(self: *CliStreamCallback) interface.StreamCallback {

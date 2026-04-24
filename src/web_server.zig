@@ -33,7 +33,7 @@ pub const WebConfigServer = struct {
                 return;
             };
             self.handleConnection(conn) catch {};
-            conn.close();
+            conn.close(io_instance);
         }
     }
 
@@ -100,8 +100,8 @@ pub const WebConfigServer = struct {
                     });
                     return;
                 };
-                defer file.close();
-                file.writeAll(body) catch {
+                defer file.close(io_instance);
+                file.writeStreamingAll(io_instance, body) catch {
                     try req.respond("{\"error\":\"write failed\"}", .{
                         .status = .internal_server_error,
                         .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }},

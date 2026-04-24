@@ -85,7 +85,7 @@ pub const ToolsRuntime = struct {
 
     pub fn listStates(self: *ToolsRuntime, allocator: std.mem.Allocator, cfg: *const core.Config) ![]ToolState {
         _ = self;
-        var states = std.ArrayList(ToolState){};
+        var states: std.ArrayList(ToolState) = .empty;
         const enabled = try effectiveEnabledToolNames(allocator, cfg);
         defer allocator.free(enabled);
 
@@ -112,7 +112,7 @@ pub const ToolsRuntime = struct {
         if (enabled and !currently_disabled) return false;
         if (!enabled and currently_disabled) return false;
 
-        var next = std.ArrayList([]const u8){};
+        var next: std.ArrayList([]const u8) = .empty;
         defer next.deinit(self.allocator);
 
         for (cfg.tools.disabled_tools) |disabled_name| {

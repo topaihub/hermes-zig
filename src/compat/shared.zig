@@ -67,3 +67,12 @@ pub fn argsFree(allocator: Allocator, args: []const [:0]const u8) void {
     for (args) |arg| allocator.free(arg);
     allocator.free(args);
 }
+
+pub const GetEnvVarOwnedError = std.mem.Allocator.Error || error{ EnvironmentVariableNotFound, InvalidWtf8 };
+
+pub fn getEnvVarOwned(allocator: Allocator, name: []const u8) GetEnvVarOwnedError![]u8 {
+    return environ().getAlloc(allocator, name) catch |err| switch (err) {
+        error.EnvironmentVariableMissing => error.EnvironmentVariableNotFound,
+        else => |e| e,
+    };
+}

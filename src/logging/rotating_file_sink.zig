@@ -8,7 +8,7 @@ pub const RotatingFileSink = struct {
     log_dir: []const u8,
     prefix: []const u8,
     current_date: [10]u8 = .{0} ** 10,
-    current_file: ?std.fs.File = null,
+    current_file: ?std.Io.File = null,
     current_size: u64 = 0,
     current_part: u32 = 0,
     mutex: std.Thread.Mutex = .{},

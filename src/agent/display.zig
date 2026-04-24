@@ -32,7 +32,7 @@ pub fn formatToolResult(allocator: std.mem.Allocator, result: []const u8, is_err
     return std.fmt.allocPrint(allocator, "{s}{s}", .{ prefix, truncated });
 }
 
-pub fn formatStreamDelta(stdout: std.fs.File, delta: []const u8) !void {
+pub fn formatStreamDelta(stdout: std.Io.File, delta: []const u8) !void {
     try stdout.writeAll(delta);
 }
 
