@@ -12,10 +12,19 @@ pub fn loadSoul(allocator: std.mem.Allocator, hermes_home: []const u8) ![]u8 {
     defer allocator.free(path);
     var io_threaded: std.Io.Threaded = .init_single_threaded;
     const io_instance = io_threaded.io();
-    const file = std.Io.Dir.openFileAbsolute(io_instance, path, .{}) catch |err| switch (err) {
-        error.FileNotFound => return try allocator.dupe(u8, DEFAULT_SOUL),
-        else => return err,
-    };
+    
+    // 如果是绝对路径，使用 openFileAbsolute；否则使用 cwd().openFile
+    const file = if (std.fs.path.isAbsolute(path))
+        std.Io.Dir.openFileAbsolute(io_instance, path, .{}) catch |err| switch (err) {
+            error.FileNotFound => return try allocator.dupe(u8, DEFAULT_SOUL),
+            else => return err,
+        }
+    else
+        std.Io.Dir.cwd().openFile(io_instance, path, .{}) catch |err| switch (err) {
+            error.FileNotFound => return try allocator.dupe(u8, DEFAULT_SOUL),
+            else => return err,
+        };
+    
     defer file.close(io_instance);
     var stream_buf: [4096]u8 = undefined;
     var file_reader = file.readerStreaming(io_instance, &stream_buf);

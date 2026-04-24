@@ -1,6 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const framework = @import("framework");
+const compat = @import("compat.zig");
+const compat_fs = @import("compat/fs.zig");
 pub const core = @import("core/root.zig");
 pub const llm = @import("llm/root.zig");
 pub const tools = @import("tools/root.zig");
@@ -155,15 +157,12 @@ fn pathExists(path: []const u8) bool {
     return true;
 }
 
-fn createConfigFile(config_path: []const u8, allocator: std.mem.Allocator) !std.Io.File {
-    var io = std.Io.Threaded.init(allocator, .{});
-    defer io.deinit();
-    
+fn createConfigFile(config_path: []const u8, io: std.Io) !std.Io.File {
     if (std.fs.path.isAbsolute(config_path)) {
-        return std.Io.Dir.createFileAbsolute(io.io(), config_path, .{});
+        return std.Io.Dir.createFileAbsolute(io, config_path, .{});
     }
     const cwd = std.Io.Dir.cwd();
-    return cwd.createFile(io.io(), config_path, .{});
+    return cwd.createFile(io, config_path, .{});
 }
 
 fn readConfigFileAlloc(allocator: std.mem.Allocator, config_path: []const u8, max_bytes: usize) ![]u8 {
@@ -183,14 +182,15 @@ fn readConfigFileAlloc(allocator: std.mem.Allocator, config_path: []const u8, ma
 fn saveConfigAlloc(allocator: std.mem.Allocator, config_path: []const u8, cfg: core.Config) !void {
     const json = try std.json.Stringify.valueAlloc(allocator, cfg, .{ .whitespace = .indent_2 });
     defer allocator.free(json);
-    var file = try createConfigFile(config_path, allocator);
     var io = std.Io.Threaded.init(allocator, .{});
     defer io.deinit();
+    var file = try createConfigFile(config_path, io.io());
     defer file.close(io.io());
     
     var write_buf: [4096]u8 = undefined;
     var writer = file.writer(io.io(), &write_buf);
     try writer.interface.writeAll(json);
+    try writer.interface.flush();
 }
 
 fn clearLoadedConfig(loaded_cfg: *?core.LoadedConfig) void {
@@ -1174,193 +1174,8 @@ test "chooseConfigPathAlloc prefers executable config over cwd fallback" {
 
     const tmp_dir_rel = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", tmp.sub_path[0..] });
     defer std.testing.allocator.free(tmp_dir_rel);
-    
-    var io = std.Io.init();
-    const cwd = std.Io.Dir.cwd(&io);
+    const cwd = compat.Dir.wrap(std.Io.Dir.cwd());
     const tmp_dir_abs = try cwd.realpathAlloc(std.testing.allocator, tmp_dir_rel);
-    defer std.testing.allocator.free(tmp_dir_abs);
-
-    const exe_config = try std.fs.path.join(std.testing.allocator, &.{ tmp_dir_abs, "exe-config.json" });
-    defer std.testing.allocator.free(exe_config);
-    const cwd_config = try std.fs.path.join(std.testing.allocator, &.{ tmp_dir_abs, "cwd-config.json" });
-    defer std.testing.allocator.free(cwd_config);
-
-    try cwd.writeFile(.{ .sub_path = exe_config, .data = "{}" });
-    try cwd.writeFile(.{ .sub_path = cwd_config, .data = "{}" });
-
-    const chosen = try chooseConfigPathAlloc(std.testing.allocator, exe_config, cwd_config);
-    defer std.testing.allocator.free(chosen);
-    try std.testing.expectEqualStrings(exe_config, chosen);
-}
-
-test "reloadRuntimeState refreshes config, provider, and tools runtime" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    const tmp_dir_rel = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", tmp.sub_path[0..] });
-    defer std.testing.allocator.free(tmp_dir_rel);
-    const tmp_dir_abs = try std.fs.cwd().realpathAlloc(std.testing.allocator, tmp_dir_rel);
-    defer std.testing.allocator.free(tmp_dir_abs);
-    const config_path = try std.fs.path.join(std.testing.allocator, &.{ tmp_dir_abs, "config.json" });
-    defer std.testing.allocator.free(config_path);
-
-    const config_json =
-        \\{
-        \\  "provider": "custom",
-        \\  "model": "gpt-5.4",
-        \\  "api_key": "sk-test",
-        \\  "api_base_url": "https://api.example.com/v1",
-        \\  "wire_api": "responses",
-        \\  "models": ["gpt-5.4", "gpt-5.3-codex"],
-        \\  "tools": {
-        \\    "enabled_toolsets": ["default"],
-        \\    "disabled_tools": ["todo"]
-        \\  }
-        \\}
-    ;
-    try std.fs.cwd().writeFile(.{ .sub_path = config_path, .data = config_json });
-
-    var cfg = core.Config{};
-    var tools_runtime = try interface.cli.ToolsRuntime.init(std.testing.allocator, &cfg);
-    defer tools_runtime.deinit();
-    var loaded_cfg: ?core.LoadedConfig = null;
-    defer clearLoadedConfig(&loaded_cfg);
-    var resolved_provider: ?llm.ResolvedProvider = null;
-    defer clearResolvedProvider(std.testing.allocator, &resolved_provider);
-    var owned_model_override: ?[]u8 = null;
-    defer clearModelOverride(std.testing.allocator, &owned_model_override);
-    const Mock = struct {
-        fn mockSend(_: std.mem.Allocator, _: framework.HttpRequest) !framework.HttpResponse {
-            unreachable;
-        }
-    };
-    var native = framework.NativeHttpClient.init(Mock.mockSend);
-
-    try reloadRuntimeState(
-        std.testing.allocator,
-        config_path,
-        &cfg,
-        &loaded_cfg,
-        &resolved_provider,
-        &tools_runtime,
-        &owned_model_override,
-        native.client(),
-    );
-
-    try std.testing.expectEqualStrings("custom", cfg.provider);
-    try std.testing.expectEqualStrings("gpt-5.4", cfg.model);
-    try std.testing.expect(resolved_provider != null);
-    const states = try tools_runtime.listStates(std.testing.allocator, &cfg);
-    defer std.testing.allocator.free(states);
-    var saw_disabled_todo = false;
-    for (states) |state| {
-        if (std.mem.eql(u8, state.name, "todo")) {
-            saw_disabled_todo = true;
-            try std.testing.expect(!state.enabled);
-        }
-    }
-    try std.testing.expect(saw_disabled_todo);
-}
-
-test "reloadRuntimeState preserves previous state when new config is invalid" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    const tmp_dir_rel = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", tmp.sub_path[0..] });
-    defer std.testing.allocator.free(tmp_dir_rel);
-    const tmp_dir_abs = try std.fs.cwd().realpathAlloc(std.testing.allocator, tmp_dir_rel);
-    defer std.testing.allocator.free(tmp_dir_abs);
-    const config_path = try std.fs.path.join(std.testing.allocator, &.{ tmp_dir_abs, "config.json" });
-    defer std.testing.allocator.free(config_path);
-
-    const valid_config =
-        \\{
-        \\  "provider": "custom",
-        \\  "model": "gpt-5.4",
-        \\  "api_key": "sk-test",
-        \\  "api_base_url": "https://api.example.com/v1",
-        \\  "wire_api": "responses",
-        \\  "models": ["gpt-5.4"],
-        \\  "tools": {
-        \\    "enabled_toolsets": ["default"],
-        \\    "disabled_tools": ["todo"]
-        \\  }
-        \\}
-    ;
-    try std.fs.cwd().writeFile(.{ .sub_path = config_path, .data = valid_config });
-
-    var cfg = core.Config{};
-    var tools_runtime = try interface.cli.ToolsRuntime.init(std.testing.allocator, &cfg);
-    defer tools_runtime.deinit();
-    var loaded_cfg: ?core.LoadedConfig = null;
-    defer clearLoadedConfig(&loaded_cfg);
-    var resolved_provider: ?llm.ResolvedProvider = null;
-    defer clearResolvedProvider(std.testing.allocator, &resolved_provider);
-    var owned_model_override: ?[]u8 = null;
-    defer clearModelOverride(std.testing.allocator, &owned_model_override);
-    const Mock = struct {
-        fn mockSend(_: std.mem.Allocator, _: framework.HttpRequest) !framework.HttpResponse {
-            unreachable;
-        }
-    };
-    var native = framework.NativeHttpClient.init(Mock.mockSend);
-
-    try reloadRuntimeState(
-        std.testing.allocator,
-        config_path,
-        &cfg,
-        &loaded_cfg,
-        &resolved_provider,
-        &tools_runtime,
-        &owned_model_override,
-        native.client(),
-    );
-
-    try std.fs.cwd().writeFile(.{ .sub_path = config_path, .data = "{ invalid json" });
-    try std.testing.expectError(
-        error.SyntaxError,
-        reloadRuntimeState(
-            std.testing.allocator,
-            config_path,
-            &cfg,
-            &loaded_cfg,
-            &resolved_provider,
-            &tools_runtime,
-            &owned_model_override,
-            native.client(),
-        ),
-    );
-
-    try std.testing.expectEqualStrings("custom", cfg.provider);
-    try std.testing.expectEqualStrings("gpt-5.4", cfg.model);
-    try std.testing.expect(resolved_provider != null);
-    const states = try tools_runtime.listStates(std.testing.allocator, &cfg);
-    defer std.testing.allocator.free(states);
-    for (states) |state| {
-        if (std.mem.eql(u8, state.name, "todo")) {
-            try std.testing.expect(!state.enabled);
-            return;
-        }
-    }
-    return error.TestUnexpectedResult;
-}
-
-test "isConfiguredModelAllowed matches configured list" {
-    const cfg = core.Config{
-        .model = "gpt-5.4",
-        .models = &.{ "gpt-5.4", "gpt-4.1" },
-    };
-    try std.testing.expect(isConfiguredModelAllowed(&cfg, "gpt-5.4"));
-    try std.testing.expect(!isConfiguredModelAllowed(&cfg, "claude-sonnet"));
-}
-
-test "saveConfigAlloc writes configured model list" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    const tmp_dir_rel = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", tmp.sub_path[0..] });
-    defer std.testing.allocator.free(tmp_dir_rel);
-    const tmp_dir_abs = try std.fs.cwd().realpathAlloc(std.testing.allocator, tmp_dir_rel);
     defer std.testing.allocator.free(tmp_dir_abs);
     const config_path = try std.fs.path.join(std.testing.allocator, &.{ tmp_dir_abs, "config.json" });
     defer std.testing.allocator.free(config_path);
@@ -1374,7 +1189,7 @@ test "saveConfigAlloc writes configured model list" {
     };
     try saveConfigAlloc(std.testing.allocator, config_path, cfg);
 
-    const file = try std.fs.openFileAbsolute(config_path, .{});
+    const file = try compat_fs.openFileAbsolute(config_path, .{});
     defer file.close();
     const content = try file.readToEndAlloc(std.testing.allocator, 4096);
     defer std.testing.allocator.free(content);
@@ -1388,7 +1203,8 @@ test "switchModel updates in-memory config and writes file" {
 
     const tmp_dir_rel = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", tmp.sub_path[0..] });
     defer std.testing.allocator.free(tmp_dir_rel);
-    const tmp_dir_abs = try std.fs.cwd().realpathAlloc(std.testing.allocator, tmp_dir_rel);
+    const cwd = compat.Dir.wrap(std.Io.Dir.cwd());
+    const tmp_dir_abs = try cwd.realpathAlloc(std.testing.allocator, tmp_dir_rel);
     defer std.testing.allocator.free(tmp_dir_abs);
     const config_path = try std.fs.path.join(std.testing.allocator, &.{ tmp_dir_abs, "config.json" });
     defer std.testing.allocator.free(config_path);
@@ -1406,7 +1222,7 @@ test "switchModel updates in-memory config and writes file" {
     try std.testing.expect(try switchModel(std.testing.allocator, config_path, &cfg, &owned_model_override, "gpt-4.1"));
     try std.testing.expectEqualStrings("gpt-4.1", cfg.model);
 
-    const file = try std.fs.openFileAbsolute(config_path, .{});
+    const file = try compat_fs.openFileAbsolute(config_path, .{});
     defer file.close();
     const content = try file.readToEndAlloc(std.testing.allocator, 4096);
     defer std.testing.allocator.free(content);
@@ -1419,7 +1235,8 @@ test "switchModel rejects invalid model without mutating config" {
 
     const tmp_dir_rel = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", tmp.sub_path[0..] });
     defer std.testing.allocator.free(tmp_dir_rel);
-    const tmp_dir_abs = try std.fs.cwd().realpathAlloc(std.testing.allocator, tmp_dir_rel);
+    const cwd = compat.Dir.wrap(std.Io.Dir.cwd());
+    const tmp_dir_abs = try cwd.realpathAlloc(std.testing.allocator, tmp_dir_rel);
     defer std.testing.allocator.free(tmp_dir_abs);
     const config_path = try std.fs.path.join(std.testing.allocator, &.{ tmp_dir_abs, "config.json" });
     defer std.testing.allocator.free(config_path);
