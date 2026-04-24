@@ -1,6 +1,7 @@
 const std = @import("std");
 const net = std.Io.net;
 const http = std.http;
+const compat = @import("interface/compat.zig");
 
 const html_content = @embedFile("web_config.html");
 
@@ -39,8 +40,8 @@ pub const WebConfigServer = struct {
 
     pub fn stop(self: *WebConfigServer) void {
         self.running.store(false, .release);
-        const addr = std.Io.net.IpAddress.parseIp4("127.0.0.1", self.port) catch return;
-        const stream = net.tcpConnectToAddress(addr) catch return;
+        const addr = compat.net.Address.parseIp4("127.0.0.1", self.port) catch return;
+        const stream = compat.net.tcpConnectToAddress(addr) catch return;
         stream.close();
     }
 
