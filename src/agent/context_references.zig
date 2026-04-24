@@ -3,18 +3,18 @@ const std = @import("std");
 pub const Reference = struct { path: []const u8 };
 
 pub fn parseReferences(allocator: std.mem.Allocator, message: []const u8) ![]Reference {
-    var refs = std.ArrayList(Reference).init(allocator);
+    var refs = std.ArrayList(Reference).empty;
     var i: usize = 0;
     while (i < message.len) {
         if (message[i] == '@') {
             const start = i + 1;
             var end = start;
             while (end < message.len and message[end] != ' ' and message[end] != '\n') : (end += 1) {}
-            if (end > start) try refs.append(.{ .path = message[start..end] });
+            if (end > start) try refs.append(allocator, .{ .path = message[start..end] });
             i = end;
         } else i += 1;
     }
-    return refs.toOwnedSlice();
+    return refs.toOwnedSlice(allocator);
 }
 
 pub fn expandReference(allocator: std.mem.Allocator, ref: Reference, working_dir: []const u8) ![]u8 {

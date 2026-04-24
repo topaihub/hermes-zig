@@ -112,8 +112,8 @@ test "makeToolHandler compiles with valid tool struct" {
     const handler = makeToolHandler(TestTool, &tool);
     try std.testing.expectEqualStrings("test_tool", handler.schema.name);
 
-    var empty = std.json.ObjectMap.init(std.testing.allocator);
-    defer empty.deinit();
+    var empty = try std.json.ObjectMap.init(std.testing.allocator, &.{}, &.{});
+    defer empty.deinit(std.testing.allocator);
     const result = try handler.execute(std.testing.allocator, empty);
     try std.testing.expectEqualStrings("ok", result.output);
 }

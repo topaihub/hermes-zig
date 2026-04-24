@@ -13,16 +13,22 @@ pub const Spinner = struct {
 };
 
 pub fn formatToolCall(allocator: std.mem.Allocator, name: []const u8, keys: []const []const u8, vals: []const []const u8) ![]u8 {
-    var buf = std.ArrayList(u8){};
+    var buf = std.ArrayList(u8).empty;
     defer buf.deinit(allocator);
-    const w = buf.writer(allocator);
-    try w.print("⚡ {s}(", .{name});
+    
+    try buf.appendSlice(allocator, "⚡ ");
+    try buf.appendSlice(allocator, name);
+    try buf.append(allocator, '(');
+    
     for (keys, 0..) |k, i| {
-        if (i > 0) try w.writeAll(", ");
-        try w.print("{s}={s}", .{ k, vals[i] });
+        if (i > 0) try buf.appendSlice(allocator, ", ");
+        try buf.appendSlice(allocator, k);
+        try buf.append(allocator, '=');
+        try buf.appendSlice(allocator, vals[i]);
     }
-    try w.writeAll(")");
-    return try buf.toOwnedSlice(allocator);
+    try buf.append(allocator, ')');
+    
+    return buf.toOwnedSlice(allocator);
 }
 
 pub fn formatToolResult(allocator: std.mem.Allocator, result: []const u8, is_error: bool) ![]u8 {

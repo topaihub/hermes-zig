@@ -8,7 +8,8 @@ pub const SessionInsights = struct {
     duration_ms: i64,
 
     pub fn fromSession(usage: core_types.TokenUsage, tool_calls: u32, start_ms: i64) SessionInsights {
-        const now: i64 = 0; // TODO: Fix timestamp in Zig 0.16.0
+        const time_utils = @import("../core/time_utils.zig");
+        const now = time_utils.getCurrentTimestamp();
         return .{
             .total_tokens = usage.total_tokens,
             .total_cost = @as(f64, @floatFromInt(usage.total_tokens)) * 0.00001,
