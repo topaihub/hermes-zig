@@ -10,12 +10,9 @@ const Config = types.Config;
 const ProviderEntry = types.ProviderEntry;
 
 /// Parse a JSON configuration file
-pub fn parseConfigFile(allocator: std.mem.Allocator, path: []const u8) !Config {
+pub fn parseConfigFile(allocator: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, path: []const u8) !Config {
     // Read file content
-    const file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
-    
-    const content = try file.readToEndAlloc(allocator, 10 * 1024 * 1024); // 10MB max
+    const content = try dir.readFileAlloc(io, path, allocator, .limited(10 * 1024 * 1024)); // 10MB max
     defer allocator.free(content);
     
     // Expand environment variables
@@ -524,27 +521,8 @@ test "parseConfigFile - valid JSON" {
     // Close file after writing
     file.close(std.testing.io);
     
-    // Open file for reading to parse
-    const read_file = try tmp_dir.dir.openFile(std.testing.io, "config.json", .{});
-    defer read_file.close(std.testing.io);
-    
-    // Read file content - use readSliceShort to avoid EndOfStream
-    var read_buffer: [4096]u8 = undefined;
-    var r = read_file.reader(std.testing.io, &read_buffer);
-    const n = try r.interface.readSliceShort(&read_buffer);
-    const content = read_buffer[0..n];
-    
-    // Parse JSON directly from content
-    const parsed = try std.json.parseFromSlice(
-        std.json.Value,
-        allocator,
-        content,
-        .{},
-    );
-    defer parsed.deinit();
-    
-    const root = parsed.value.object;
-    const config = try parseConfig(allocator, root);
+    // Parse config file directly
+    const config = try parseConfigFile(allocator, std.testing.io, tmp_dir.dir, "config.json");
     defer {
         for (config.providers) |provider| {
             allocator.free(provider.name);
