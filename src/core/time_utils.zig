@@ -1,35 +1,94 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
-pub fn formatTimestamp(allocator: std.mem.Allocator, unix_ms: i64) ![]u8 {
-    const secs: u64 = @intCast(@divTrunc(unix_ms, 1000));
-    const es = std.time.epoch.EpochSeconds{ .secs = secs };
-    const day = es.getEpochDay();
-    const yd = day.calculateYearDay();
-    const md = yd.calculateMonthDay();
-    const ds = es.getDaySeconds();
-    return try std.fmt.allocPrint(allocator, "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}", .{
-        yd.year, @intFromEnum(md.month), md.day_index + 1, ds.getHoursIntoDay(), ds.getMinutesIntoHour(), ds.getSecondsIntoMinute(),
-    });
+/// Get current time in nanoseconds since epoch
+fn nowNanoseconds() i128 {
+    return switch (builtin.os.tag) {
+        .windows => blk: {
+            const epoch_ns = std.time.epoch.windows * std.time.ns_per_s;
+            break :blk @as(i128, std.os.windows.ntdll.RtlGetSystemTimePrecise()) * 100 + epoch_ns;
+        },
+        .wasi => blk: {
+            var ts: std.os.wasi.timestamp_t = undefined;
+            if (std.os.wasi.clock_time_get(.REALTIME, 1, &ts) == .SUCCESS) {
+                break :blk @intCast(ts);
+            }
+            break :blk 0;
+        },
+        else => blk: {
+            var ts: std.posix.timespec = undefined;
+            switch (std.posix.errno(std.posix.system.clock_gettime(.REALTIME, &ts))) {
+                .SUCCESS => break :blk @as(i128, ts.sec) * std.time.ns_per_s + ts.nsec,
+                else => break :blk 0,
+            }
+        },
+    };
 }
 
-pub fn relativeTime(allocator: std.mem.Allocator, unix_ms: i64) ![]u8 {
-    const now_ms: i64 = @intCast(std.time.timestamp() * 1000);
-    const diff_secs: u64 = @intCast(@max(0, @divTrunc(now_ms - unix_ms, 1000)));
-    if (diff_secs < 60) return try std.fmt.allocPrint(allocator, "{d} seconds ago", .{diff_secs});
-    if (diff_secs < 3600) return try std.fmt.allocPrint(allocator, "{d} minutes ago", .{diff_secs / 60});
-    if (diff_secs < 86400) return try std.fmt.allocPrint(allocator, "{d} hours ago", .{diff_secs / 3600});
-    return try std.fmt.allocPrint(allocator, "{d} days ago", .{diff_secs / 86400});
+/// Get current Unix timestamp in seconds
+pub fn getCurrentTimestamp() i64 {
+    return @intCast(@divTrunc(nowNanoseconds(), std.time.ns_per_s));
 }
 
-test "formatTimestamp known value" {
-    // 2024-01-01 00:00:00 UTC = 1704067200000 ms
-    const result = try formatTimestamp(std.testing.allocator, 1704067200000);
-    defer std.testing.allocator.free(result);
-    try std.testing.expectEqualStrings("2024-01-01 00:00:00", result);
+/// Get current timestamp in milliseconds
+pub fn milliTimestamp() i64 {
+    return @intCast(@divTrunc(nowNanoseconds(), std.time.ns_per_ms));
 }
 
-test "relativeTime returns non-empty" {
-    const result = try relativeTime(std.testing.allocator, 0);
-    defer std.testing.allocator.free(result);
-    try std.testing.expect(result.len > 0);
+/// Format a Unix timestamp as ISO 8601 string (YYYY-MM-DDTHH:MM:SSZ)
+pub fn formatTimestamp(allocator: std.mem.Allocator, timestamp: i64) ![]u8 {
+    const epoch_seconds: u64 = @intCast(timestamp);
+    const epoch_day: u47 = @intCast(epoch_seconds / std.time.s_per_day);
+    const day_seconds = epoch_seconds % std.time.s_per_day;
+
+    const year_day = std.time.epoch.EpochDay{ .day = epoch_day };
+    const year = year_day.calculateYearDay();
+    const month_day = year.calculateMonthDay();
+
+    const hours = day_seconds / std.time.s_per_hour;
+    const minutes = (day_seconds % std.time.s_per_hour) / std.time.s_per_min;
+    const seconds = day_seconds % std.time.s_per_min;
+
+    return try std.fmt.allocPrint(
+        allocator,
+        "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z",
+        .{
+            year.year,
+            month_day.month.numeric(),
+            month_day.day_index + 1,
+            hours,
+            minutes,
+            seconds,
+        },
+    );
+}
+
+test "formatTimestamp produces valid ISO 8601" {
+    const allocator = std.testing.allocator;
+    
+    // Test known timestamp: 2024-01-15 13:10:45 UTC
+    const timestamp: i64 = 1705324245;
+    const formatted = try formatTimestamp(allocator, timestamp);
+    defer allocator.free(formatted);
+    
+    try std.testing.expectEqualStrings("2024-01-15T13:10:45Z", formatted);
+}
+
+test "formatTimestamp handles epoch zero" {
+    const allocator = std.testing.allocator;
+    
+    const formatted = try formatTimestamp(allocator, 0);
+    defer allocator.free(formatted);
+    
+    try std.testing.expectEqualStrings("1970-01-01T00:00:00Z", formatted);
+}
+
+test "getCurrentTimestamp returns positive value" {
+    const ts = getCurrentTimestamp();
+    try std.testing.expect(ts > 0);
+}
+
+test "milliTimestamp returns positive value" {
+    const ts = milliTimestamp();
+    try std.testing.expect(ts > 0);
 }
