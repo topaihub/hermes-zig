@@ -2,10 +2,14 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 pub fn getEnvVarOwned(allocator: std.mem.Allocator, key: []const u8) !?[]u8 {
-    return std.process.getEnvVarOwned(allocator, key) catch |err| switch (err) {
-        error.EnvironmentVariableNotFound => null,
-        else => return err,
-    };
+    const environ: std.process.Environ = .{ .block = .global };
+    var env_map = try environ.createMap(allocator);
+    defer env_map.deinit();
+    
+    if (env_map.get(key)) |value| {
+        return try allocator.dupe(u8, value);
+    }
+    return null;
 }
 
 pub fn getHomeDirOwned(allocator: std.mem.Allocator) ![]u8 {

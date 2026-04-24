@@ -6,7 +6,7 @@ pub const History = struct {
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) History {
-        return .{ .entries = .{}, .allocator = allocator };
+        return .{ .entries = std.ArrayList([]const u8).initCapacity(allocator, 0) catch .empty, .allocator = allocator };
     }
 
     pub fn deinit(self: *History) void {

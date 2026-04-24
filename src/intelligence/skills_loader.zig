@@ -16,7 +16,10 @@ pub const SkillDefinition = struct {
 };
 
 pub fn loadSkill(allocator: std.mem.Allocator, path: []const u8) !?SkillDefinition {
-    const content = std.fs.cwd().readFileAlloc(allocator, path, 1024 * 1024) catch return null;
+    var io_threaded: std.Io.Threaded = .init_single_threaded;
+    const io_instance = io_threaded.io();
+    const cwd = std.Io.Dir.cwd();
+    const content = cwd.readFileAlloc(io_instance, path, allocator, @enumFromInt(1024 * 1024)) catch return null;
     defer allocator.free(content);
     return parseSkillContent(allocator, content);
 }
@@ -52,17 +55,20 @@ pub fn parseSkillContent(allocator: std.mem.Allocator, content: []const u8) !?Sk
 }
 
 pub fn loadSkillsFromDir(allocator: std.mem.Allocator, dir_path: []const u8) ![]SkillDefinition {
-    var skills = std.ArrayList(SkillDefinition){};
+    var skills: std.ArrayListUnmanaged(SkillDefinition) = .empty;
     errdefer {
         for (skills.items) |*s| s.deinit();
         skills.deinit(allocator);
     }
 
-    var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch return skills.toOwnedSlice(allocator);
-    defer dir.close();
+    var io_threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
+    const io_instance = io_threaded.io();
+    const cwd = std.Io.Dir.cwd();
+    var dir = cwd.openDir(io_instance, dir_path, .{ .iterate = true }) catch return skills.toOwnedSlice(allocator);
+    defer dir.close(io_instance);
 
     var iter = dir.iterate();
-    while (try iter.next()) |entry| {
+    while (try iter.next(io_instance)) |entry| {
         if (entry.kind == .directory) {
             const skill_path = try std.fmt.allocPrint(allocator, "{s}/{s}/SKILL.md", .{ dir_path, entry.name });
             defer allocator.free(skill_path);

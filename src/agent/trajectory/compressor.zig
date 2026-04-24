@@ -5,8 +5,8 @@ const core_types = @import("../../core/types.zig");
 /// Compress a trajectory by removing system messages and merging consecutive
 /// assistant messages with no tool calls.
 pub fn compress(allocator: std.mem.Allocator, trajectory: format.Trajectory) !format.Trajectory {
-    var kept = std.ArrayList(format.Turn).init(allocator);
-    defer kept.deinit();
+    var kept = std.ArrayList(format.Turn).empty;
+    defer kept.deinit(allocator);
 
     for (trajectory.turns) |turn| {
         // Remove system messages (reconstructible)
@@ -20,7 +20,7 @@ pub fn compress(allocator: std.mem.Allocator, trajectory: format.Trajectory) !fo
             }
         }
 
-        try kept.append(turn);
+        try kept.append(allocator, turn);
     }
 
     const turns = try allocator.dupe(format.Turn, kept.items);

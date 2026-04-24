@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-pub fn handleCronCommand(allocator: Allocator, args: []const u8, stdout: std.fs.File) !void {
+pub fn handleCronCommand(allocator: Allocator, args: []const u8, stdout: std.Io.File) !void {
     if (args.len == 0 or std.mem.eql(u8, args, "list")) {
         try stdout.writeAll("  No scheduled jobs.\n");
     } else if (std.mem.startsWith(u8, args, "add ")) {

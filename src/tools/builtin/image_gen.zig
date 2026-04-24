@@ -16,7 +16,10 @@ pub const ImageGenTool = struct {
         const prompt = tools_interface.getString(args, "prompt") orelse return .{ .output = "missing prompt", .is_error = true };
         const size = tools_interface.getString(args, "size") orelse "1024x1024";
 
-        const api_key = std.process.getEnvVarOwned(allocator, "OPENAI_API_KEY") catch {
+        const environ = std.process.Environ.empty;
+        var env_map = try environ.createMap(allocator);
+        defer env_map.deinit();
+        const api_key = env_map.get("OPENAI_API_KEY") orelse {
             return .{ .output = try std.fmt.allocPrint(allocator,
                 \\[ImageGen] API endpoint: POST https://api.openai.com/v1/images/generations
                 \\  Prompt: {s}
@@ -25,12 +28,13 @@ pub const ImageGenTool = struct {
                 \\Error: OPENAI_API_KEY not set. Set env var to enable image generation.
             , .{ prompt, size }) };
         };
-        defer allocator.free(api_key);
 
         const body = try std.fmt.allocPrint(allocator, "{{\"model\":\"dall-e-3\",\"prompt\":\"{s}\",\"size\":\"{s}\",\"n\":1}}", .{ prompt, size });
         defer allocator.free(body);
 
-        var client: std.http.Client = .{ .allocator = allocator };
+        var io = std.Io.Threaded.init(allocator, .{});
+        defer io.deinit();
+        var client: std.http.Client = .{ .allocator = allocator, .io = io.io() };
         defer client.deinit();
 
         var response_writer: std.Io.Writer.Allocating = .init(allocator);

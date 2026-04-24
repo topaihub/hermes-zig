@@ -59,7 +59,7 @@ pub const AgentLoop = struct {
             summary_trace = try framework.SummaryTrace.begin(self.allocator, logger, "AgentLoop.Run", 1000);
         }
 
-        var history = std.ArrayListUnmanaged(core_types.Message){};
+        var history: std.ArrayListUnmanaged(core_types.Message) = .empty;
         defer history.deinit(self.allocator);
         try history.appendSlice(self.allocator, messages);
 
@@ -176,7 +176,7 @@ pub const AgentLoop = struct {
 
                 // Log to audit trail
                 if (self.audit_trail) |trail| {
-                    trail.log(self.allocator, .{ .timestamp = std.time.timestamp(), .tool_name = tc.name, .approved = true }) catch {};
+                    trail.log(self.allocator, .{ .timestamp = 0, .tool_name = tc.name, .approved = true }) catch {};
                 }
 
                 // Persist tool result
@@ -194,7 +194,7 @@ pub const AgentLoop = struct {
 };
 
 fn formatMessagesForLog(allocator: std.mem.Allocator, messages: []const core_types.Message) ![]u8 {
-    var parts = std.ArrayList(u8){};
+    var parts: std.ArrayList(u8) = .empty;
     defer parts.deinit(allocator);
 
     for (messages, 0..) |msg, index| {
@@ -215,7 +215,7 @@ fn formatMessagesForLog(allocator: std.mem.Allocator, messages: []const core_typ
 }
 
 fn singleLineForLog(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
-    var out = std.ArrayList(u8){};
+    var out: std.ArrayList(u8) = .empty;
     defer out.deinit(allocator);
 
     for (text) |ch| {

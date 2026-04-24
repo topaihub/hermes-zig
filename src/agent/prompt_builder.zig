@@ -10,7 +10,7 @@ pub fn buildSystemPrompt(
     soul_content: ?[]const u8,
     active_skill: ?*const skills_loader.SkillDefinition,
 ) ![]u8 {
-    var parts = std.ArrayList([]const u8){};
+    var parts: std.ArrayList([]const u8) = .empty;
     defer parts.deinit(allocator);
 
     if (soul_content) |soul| {

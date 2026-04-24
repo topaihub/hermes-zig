@@ -50,16 +50,29 @@ pub const CheckpointTool = struct {
     }
 
     fn runGit(allocator: std.mem.Allocator, argv: []const []const u8) ![]u8 {
-        var child = std.process.Child.init(argv, allocator);
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Pipe;
-        try child.spawn();
-        const stdout = try child.stdout.?.readToEndAlloc(allocator, 1024 * 1024);
+        var io = std.Io.Threaded.init(allocator, .{});
+        defer io.deinit();
+        
+        var child = try std.process.spawn(io.io(), .{
+            .argv = argv,
+            .stdout = .pipe,
+            .stderr = .pipe,
+        });
+        
+        var stdout_buf: [4096]u8 = undefined;
+        var stderr_buf: [4096]u8 = undefined;
+        var stdout_reader = child.stdout.?.reader(io.io(), &stdout_buf);
+        var stderr_reader = child.stderr.?.reader(io.io(), &stderr_buf);
+        
+        const stdout = try stdout_reader.interface.allocRemaining(allocator, @enumFromInt(1024 * 1024));
         errdefer allocator.free(stdout);
-        const stderr = try child.stderr.?.readToEndAlloc(allocator, 1024 * 1024);
-        defer allocator.free(stderr);
-        const term = try child.wait();
-        if (term.Exited != 0) {
+        _ = try stderr_reader.interface.allocRemaining(allocator, @enumFromInt(1024 * 1024));
+        
+        if (child.stdout) |f| f.close(io.io());
+        if (child.stderr) |f| f.close(io.io());
+        
+        const term = try child.wait(io.io());
+        if (term != .exited or term.exited != 0) {
             allocator.free(stdout);
             return error.GitFailed;
         }

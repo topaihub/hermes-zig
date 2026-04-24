@@ -23,7 +23,7 @@ pub fn parseArgs(args: []const u8) ParsedPairing {
     return .{ .action = action, .platform = platform, .code = code };
 }
 
-pub fn handlePairingCommand(allocator: Allocator, args: []const u8, stdout: std.fs.File) !void {
+pub fn handlePairingCommand(allocator: Allocator, args: []const u8, stdout: std.Io.File) !void {
     const parsed = parseArgs(args);
     switch (parsed.action) {
         .list => try stdout.writeAll("  No paired devices.\n"),

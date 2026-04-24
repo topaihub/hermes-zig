@@ -13,16 +13,16 @@ pub fn compress(allocator: std.mem.Allocator, messages: []const core_types.Messa
     }
 
     // Keep system messages and trim oldest non-system messages
-    var result = std.ArrayList(core_types.Message).init(allocator);
+    var result = std.ArrayList(core_types.Message).empty;
 
     // First pass: collect system messages
     for (messages) |m| {
-        if (m.role == .system) try result.append(m);
+        if (m.role == .system) try result.append(allocator, m);
     }
 
     // Second pass: collect non-system from the end until budget
-    var kept = std.ArrayList(core_types.Message).init(allocator);
-    defer kept.deinit();
+    var kept = std.ArrayList(core_types.Message).empty;
+    defer kept.deinit(allocator);
     var used: usize = 0;
     for (result.items) |m| used += m.content.len;
 
@@ -32,14 +32,14 @@ pub fn compress(allocator: std.mem.Allocator, messages: []const core_types.Messa
         if (messages[i].role == .system) continue;
         if (used + messages[i].content.len > char_budget) break;
         used += messages[i].content.len;
-        try kept.append(messages[i]);
+        try kept.append(allocator, messages[i]);
     }
 
     // Reverse kept to restore order
     std.mem.reverse(core_types.Message, kept.items);
-    try result.appendSlice(kept.items);
+    try result.appendSlice(allocator, kept.items);
 
-    return result.toOwnedSlice();
+    return result.toOwnedSlice(allocator);
 }
 
 test "compress keeps all messages when under limit" {

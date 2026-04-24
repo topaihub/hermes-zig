@@ -28,12 +28,13 @@ pub const SessionSearchTool = struct {
 
         if (results.len == 0) return .{ .output = try std.fmt.allocPrint(allocator, "No results for: {s}", .{query}) };
 
-        var out = std.ArrayList(u8){};
+        var out: std.ArrayList(u8) = .empty;
         defer out.deinit(allocator);
-        const w = out.writer(allocator);
         const n: usize = @min(results.len, @as(usize, @intCast(limit)));
         for (results[0..n], 0..) |r, i| {
-            try w.print("{d}. [{s}] {s}: {s}\n", .{ i + 1, r.session_id, r.role, r.content });
+            const line = try std.fmt.allocPrint(allocator, "{d}. [{s}] {s}: {s}\n", .{ i + 1, r.session_id, r.role, r.content });
+            defer allocator.free(line);
+            try out.appendSlice(allocator, line);
         }
         return .{ .output = try out.toOwnedSlice(allocator) };
     }

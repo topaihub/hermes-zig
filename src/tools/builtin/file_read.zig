@@ -17,14 +17,24 @@ pub const FileReadTool = struct {
         const start_line = tools_interface.getInt(args, "start_line");
         const end_line = tools_interface.getInt(args, "end_line");
 
-        const content = std.fs.cwd().readFileAlloc(allocator, path, 10 * 1024 * 1024) catch |e|
+        var io = std.Io.Threaded.init(allocator, .{});
+        defer io.deinit();
+        
+        const cwd = std.Io.Dir.cwd();
+        const file = std.Io.Dir.openFile(cwd, io.io(), path, .{}) catch |e|
+            return .{ .output = try std.fmt.allocPrint(allocator, "Error reading file: {s}", .{@errorName(e)}) };
+        defer file.close(io.io());
+        
+        var read_buf: [4096]u8 = undefined;
+        var reader = file.reader(io.io(), &read_buf);
+        const content = reader.interface.allocRemaining(allocator, @enumFromInt(10 * 1024 * 1024)) catch |e|
             return .{ .output = try std.fmt.allocPrint(allocator, "Error reading file: {s}", .{@errorName(e)}) };
 
         if (start_line == null and end_line == null)
             return .{ .output = content };
 
         defer allocator.free(content);
-        var lines: std.ArrayList([]const u8) = .{};
+        var lines: std.ArrayList([]const u8) = .empty;
         defer lines.deinit(allocator);
         var iter = std.mem.splitScalar(u8, content, '\n');
         var i: i64 = 1;

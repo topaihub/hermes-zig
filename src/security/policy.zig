@@ -19,14 +19,15 @@ fn isDangerousTool(name: []const u8) bool {
 }
 
 pub fn checkWebsitePolicy(url: []const u8, rules: []const []const u8) bool {
+    // Process rules in order - first match wins
     for (rules) |rule| {
-        if (std.mem.startsWith(u8, rule, "block:")) {
-            const pattern = rule[6..];
-            if (std.mem.indexOf(u8, url, pattern) != null) return false;
-        }
         if (std.mem.startsWith(u8, rule, "allow:")) {
             const pattern = rule[6..];
             if (std.mem.indexOf(u8, url, pattern) != null) return true;
+        }
+        if (std.mem.startsWith(u8, rule, "block:")) {
+            const pattern = rule[6..];
+            if (std.mem.indexOf(u8, url, pattern) != null) return false;
         }
     }
     return true;
@@ -43,7 +44,7 @@ test "checkWebsitePolicy allows non-matching" {
 }
 
 test "checkWebsitePolicy allow rule" {
-    const rules = &[_][]const u8{ "block:example.com", "allow:example.com/safe" };
+    const rules = &[_][]const u8{ "allow:example.com/safe", "block:example.com" };
     try std.testing.expect(checkWebsitePolicy("https://example.com/safe/page", rules));
 }
 

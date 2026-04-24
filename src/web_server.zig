@@ -1,6 +1,7 @@
 const std = @import("std");
-const net = std.net;
+const net = std.Io.net;
 const http = std.http;
+const compat = @import("interface/compat.zig");
 
 const html_content = @embedFile("web_config.html");
 
@@ -12,43 +13,47 @@ pub const WebConfigServer = struct {
     listener: ?net.Server = null,
 
     pub fn start(self: *WebConfigServer) void {
-        const addr = net.Address.parseIp("127.0.0.1", self.port) catch return;
-        var server = addr.listen(.{ .reuse_address = true }) catch return;
+        var io_threaded: std.Io.Threaded = .init_single_threaded;
+        const io_instance = io_threaded.io();
+        const addr = net.IpAddress.parseIp4("127.0.0.1", self.port) catch return;
+        var server = addr.listen(io_instance, .{ .reuse_address = true }) catch return;
         self.listener = server;
         self.running.store(true, .release);
         defer {
             if (self.listener != null) {
-                server.deinit();
+                server.deinit(io_instance);
                 self.listener = null;
             }
         }
 
         while (self.running.load(.acquire)) {
-            const conn = server.accept() catch |err| {
+            const conn = server.accept(io_instance) catch |err| {
                 if (!self.running.load(.acquire) or err == error.ConnectionAborted or err == error.Unexpected) {
                     return;
                 }
                 return;
             };
-            self.handleConnection(conn.stream) catch {};
-            conn.stream.close();
+            self.handleConnection(conn) catch {};
+            conn.close(io_instance);
         }
     }
 
     pub fn stop(self: *WebConfigServer) void {
         self.running.store(false, .release);
-        const addr = net.Address.parseIp("127.0.0.1", self.port) catch return;
-        const stream = net.tcpConnectToAddress(addr) catch return;
+        const addr = compat.net.Address.parseIp4("127.0.0.1", self.port) catch return;
+        const stream = compat.net.tcpConnectToAddress(addr) catch return;
         stream.close();
     }
 
     fn handleConnection(self: *WebConfigServer, stream: net.Stream) !void {
+        var io_threaded: std.Io.Threaded = .init_single_threaded;
+        const io_instance = io_threaded.io();
         var read_buf: [8192]u8 = undefined;
         var write_buf: [8192]u8 = undefined;
-        var net_reader = net.Stream.Reader.init(stream, &read_buf);
-        var net_writer = net.Stream.Writer.init(stream, &write_buf);
+        var net_reader = net.Stream.Reader.init(stream, io_instance, &read_buf);
+        var net_writer = net.Stream.Writer.init(stream, io_instance, &write_buf);
 
-        var server = http.Server.init(net_reader.interface(), &net_writer.interface);
+        var server = http.Server.init(&net_reader.interface, &net_writer.interface);
         var req = server.receiveHead() catch return;
 
         const target = req.head.target;
@@ -96,8 +101,8 @@ pub const WebConfigServer = struct {
                     });
                     return;
                 };
-                defer file.close();
-                file.writeAll(body) catch {
+                defer file.close(io_instance);
+                file.writeStreamingAll(io_instance, body) catch {
                     try req.respond("{\"error\":\"write failed\"}", .{
                         .status = .internal_server_error,
                         .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }},
@@ -134,20 +139,25 @@ pub const WebConfigServer = struct {
     }
 };
 
-fn createConfigFile(config_path: []const u8) !std.fs.File {
-    if (std.fs.path.isAbsolute(config_path)) {
-        return std.fs.createFileAbsolute(config_path, .{});
-    }
-    return std.fs.cwd().createFile(config_path, .{});
+fn createConfigFile(config_path: []const u8) !std.Io.File {
+    var io_threaded: std.Io.Threaded = .init_single_threaded;
+    const io_instance = io_threaded.io();
+    return std.Io.Dir.createFileAbsolute(io_instance, config_path, .{});
 }
 
 fn readConfigFileAlloc(allocator: std.mem.Allocator, config_path: []const u8, max_bytes: usize) ![]u8 {
     if (std.fs.path.isAbsolute(config_path)) {
-        const file = try std.fs.openFileAbsolute(config_path, .{});
-        defer file.close();
-        return file.readToEndAlloc(allocator, max_bytes);
+        var io_threaded: std.Io.Threaded = .init_single_threaded;
+        const io_instance = io_threaded.io();
+        const file = try std.Io.Dir.openFileAbsolute(io_instance, config_path, .{});
+        defer file.close(io_instance);
+        var stream_buf: [4096]u8 = undefined;
+        var file_reader = file.readerStreaming(io_instance, &stream_buf);
+        return try file_reader.interface.allocRemaining(allocator, .limited(max_bytes));
     }
-    return std.fs.cwd().readFileAlloc(allocator, config_path, max_bytes);
+    var io_threaded: std.Io.Threaded = .init_single_threaded;
+    const io_instance = io_threaded.io();
+    return std.Io.Dir.cwd().readFileAlloc(io_instance, config_path, allocator, @enumFromInt(max_bytes));
 }
 
 test "WebConfigServer struct init" {

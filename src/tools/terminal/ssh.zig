@@ -12,17 +12,33 @@ pub const SshBackend = struct {
         defer allocator.free(port_str);
         const target = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ self.user, self.host });
         defer allocator.free(target);
-        var child = std.process.Child.init(&.{ "ssh", target, "-p", port_str, "sh", "-c", cmd }, allocator);
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Pipe;
-        try child.spawn();
-        const stdout = try child.stdout.?.readToEndAlloc(allocator, 1024 * 1024);
-        const stderr = try child.stderr.?.readToEndAlloc(allocator, 1024 * 1024);
-        const term = try child.wait();
+        
+        var io = std.Io.Threaded.init(allocator, .{});
+        defer io.deinit();
+        
+        var child = try std.process.spawn(io.io(), .{
+            .argv = &.{ "ssh", target, "-p", port_str, "sh", "-c", cmd },
+            .stdout = .pipe,
+            .stderr = .pipe,
+        });
+        
+        var stdout_buf: [4096]u8 = undefined;
+        var stderr_buf: [4096]u8 = undefined;
+        var stdout_reader = child.stdout.?.reader(io.io(), &stdout_buf);
+        var stderr_reader = child.stderr.?.reader(io.io(), &stderr_buf);
+        
+        const stdout = try stdout_reader.interface.allocRemaining(allocator, @enumFromInt(1024 * 1024));
+        errdefer allocator.free(stdout);
+        const stderr = try stderr_reader.interface.allocRemaining(allocator, @enumFromInt(1024 * 1024));
+        
+        if (child.stdout) |f| f.close(io.io());
+        if (child.stderr) |f| f.close(io.io());
+        
+        const term = try child.wait(io.io());
         return .{
             .stdout = stdout,
             .stderr = stderr,
-            .exit_code = if (term == .Exited) term.Exited else 1,
+            .exit_code = if (term == .exited) term.exited else 1,
             .allocator = allocator,
         };
     }

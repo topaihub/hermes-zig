@@ -18,7 +18,8 @@ pub const CredentialPool = struct {
 
     pub fn getNext(self: *CredentialPool) ?[]const u8 {
         if (self.keys.len == 0) return null;
-        const now = std.time.timestamp();
+        const time_utils = @import("../core/time_utils.zig");
+        const now = time_utils.getCurrentTimestamp();
         var attempts: usize = 0;
         while (attempts < self.keys.len) : (attempts += 1) {
             const key = self.keys[self.index];
@@ -32,7 +33,8 @@ pub const CredentialPool = struct {
     }
 
     pub fn cooldown(self: *CredentialPool, key: []const u8, seconds: i64) !void {
-        try self.cooldowns.put(key, std.time.timestamp() + seconds);
+        const time_utils = @import("../core/time_utils.zig");
+        try self.cooldowns.put(key, time_utils.getCurrentTimestamp() + seconds);
     }
 
     pub fn reset(self: *CredentialPool, key: []const u8) void {

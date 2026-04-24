@@ -16,9 +16,18 @@ pub const VisionTool = struct {
         const image_path = tools_interface.getString(args, "image_path") orelse return .{ .output = "missing image_path", .is_error = true };
         const prompt = tools_interface.getString(args, "prompt") orelse return .{ .output = "missing prompt", .is_error = true };
 
-        const data = std.fs.cwd().readFileAlloc(allocator, image_path, 10 * 1024 * 1024) catch |err| {
+        var io = std.Io.Threaded.init(allocator, .{});
+        defer io.deinit();
+        const cwd = std.Io.Dir.cwd();
+        
+        const file = std.Io.Dir.openFile(cwd, io.io(), image_path, .{}) catch |err| {
             return .{ .output = try std.fmt.allocPrint(allocator, "Failed to read image {s}: {s}", .{ image_path, @errorName(err) }), .is_error = true };
         };
+        defer file.close(io.io());
+        
+        var read_buf: [4096]u8 = undefined;
+        var reader = file.reader(io.io(), &read_buf);
+        const data = try reader.interface.allocRemaining(allocator, @enumFromInt(10 * 1024 * 1024));
         defer allocator.free(data);
 
         const b64_len = std.base64.standard.Encoder.calcSize(data.len);

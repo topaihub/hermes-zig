@@ -17,12 +17,22 @@ pub const FileEditTool = struct {
         const old_text = tools_interface.getString(args, "old_text") orelse return .{ .output = "missing old_text", .is_error = true };
         const new_text = tools_interface.getString(args, "new_text") orelse return .{ .output = "missing new_text", .is_error = true };
 
-        const content = std.fs.cwd().readFileAlloc(allocator, path, 10 * 1024 * 1024) catch |e|
+        var io = std.Io.Threaded.init(allocator, .{});
+        defer io.deinit();
+        
+        const cwd = std.Io.Dir.cwd();
+        const file = std.Io.Dir.openFile(cwd, io.io(), path, .{}) catch |e|
+            return .{ .output = try std.fmt.allocPrint(allocator, "Error reading file: {s}", .{@errorName(e)}) };
+        defer file.close(io.io());
+        
+        var read_buf: [4096]u8 = undefined;
+        var reader = file.reader(io.io(), &read_buf);
+        const content = reader.interface.allocRemaining(allocator, @enumFromInt(10 * 1024 * 1024)) catch |e|
             return .{ .output = try std.fmt.allocPrint(allocator, "Error reading file: {s}", .{@errorName(e)}) };
         defer allocator.free(content);
 
         var count: usize = 0;
-        var result = std.ArrayList(u8){};
+        var result: std.ArrayList(u8) = .empty;
         defer result.deinit(allocator);
 
         var rest: []const u8 = content;
@@ -36,7 +46,13 @@ pub const FileEditTool = struct {
 
         if (count == 0) return .{ .output = try std.fmt.allocPrint(allocator, "No occurrences of old_text found in {s}", .{path}) };
 
-        std.fs.cwd().writeFile(.{ .sub_path = path, .data = result.items }) catch |e|
+        const write_file = std.Io.Dir.createFile(cwd, io.io(), path, .{}) catch |e|
+            return .{ .output = try std.fmt.allocPrint(allocator, "Error writing file: {s}", .{@errorName(e)}), .is_error = true };
+        defer write_file.close(io.io());
+        
+        var write_buf: [4096]u8 = undefined;
+        var writer = write_file.writer(io.io(), &write_buf);
+        writer.interface.writeAll(result.items) catch |e|
             return .{ .output = try std.fmt.allocPrint(allocator, "Error writing file: {s}", .{@errorName(e)}), .is_error = true };
 
         return .{ .output = try std.fmt.allocPrint(allocator, "Edited {s}: replaced {d} occurrences", .{ path, count }) };

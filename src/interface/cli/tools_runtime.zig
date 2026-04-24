@@ -85,7 +85,7 @@ pub const ToolsRuntime = struct {
 
     pub fn listStates(self: *ToolsRuntime, allocator: std.mem.Allocator, cfg: *const core.Config) ![]ToolState {
         _ = self;
-        var states = std.ArrayList(ToolState){};
+        var states: std.ArrayList(ToolState) = .empty;
         const enabled = try effectiveEnabledToolNames(allocator, cfg);
         defer allocator.free(enabled);
 
@@ -112,7 +112,7 @@ pub const ToolsRuntime = struct {
         if (enabled and !currently_disabled) return false;
         if (!enabled and currently_disabled) return false;
 
-        var next = std.ArrayList([]const u8){};
+        var next: std.ArrayList([]const u8) = .empty;
         defer next.deinit(self.allocator);
 
         for (cfg.tools.disabled_tools) |disabled_name| {
@@ -298,7 +298,7 @@ pub const ToolsRuntime = struct {
 };
 
 fn effectiveEnabledToolNames(allocator: std.mem.Allocator, cfg: *const core.Config) ![][]const u8 {
-    var result = std.ArrayList([]const u8){};
+    var result: std.ArrayList([]const u8) = .empty;
     const default_toolsets = [_][]const u8{ "default" };
     const toolsets: []const []const u8 = if (cfg.tools.enabled_toolsets.len > 0)
         cfg.tools.enabled_toolsets
@@ -316,7 +316,7 @@ fn effectiveEnabledToolNames(allocator: std.mem.Allocator, cfg: *const core.Conf
         }
     }
 
-    var filtered = std.ArrayList([]const u8){};
+    var filtered: std.ArrayList([]const u8) = .empty;
     for (result.items) |name| {
         if (!sliceContains(cfg.tools.disabled_tools, name)) {
             try filtered.append(allocator, name);

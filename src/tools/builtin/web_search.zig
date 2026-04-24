@@ -25,7 +25,9 @@ pub const WebSearchTool = struct {
         const url = try std.fmt.allocPrint(allocator, "https://api.duckduckgo.com/?q={s}&format=json&no_html=1", .{encoded});
         defer allocator.free(url);
 
-        var client: std.http.Client = .{ .allocator = allocator };
+        var io = std.Io.Threaded.init(allocator, .{});
+        defer io.deinit();
+        var client: std.http.Client = .{ .allocator = allocator, .io = io.io() };
         defer client.deinit();
 
         var response_writer: std.Io.Writer.Allocating = .init(allocator);
@@ -44,14 +46,15 @@ pub const WebSearchTool = struct {
         defer parsed.deinit();
         const root = parsed.value.object;
 
-        var out = std.ArrayList(u8){};
+        var out = std.ArrayList(u8).empty;
         defer out.deinit(allocator);
-        const w = out.writer(allocator);
 
         // AbstractText
         if (root.get("AbstractText")) |v| {
             if (v == .string and v.string.len > 0) {
-                try w.print("Summary: {s}\n\n", .{v.string});
+                const line = try std.fmt.allocPrint(allocator, "Summary: {s}\n\n", .{v.string});
+                defer allocator.free(line);
+                try out.appendSlice(allocator, line);
             }
         }
 
@@ -65,9 +68,12 @@ pub const WebSearchTool = struct {
                     const text = if (item.object.get("Text")) |t| (if (t == .string) t.string else null) else null;
                     const furl = if (item.object.get("FirstURL")) |u| (if (u == .string) u.string else null) else null;
                     if (text) |t| {
-                        try w.print("- {s}", .{t});
-                        if (furl) |f| try w.print(" ({s})", .{f});
-                        try w.writeByte('\n');
+                        const line = if (furl) |f|
+                            try std.fmt.allocPrint(allocator, "- {s} ({s})\n", .{t, f})
+                        else
+                            try std.fmt.allocPrint(allocator, "- {s}\n", .{t});
+                        defer allocator.free(line);
+                        try out.appendSlice(allocator, line);
                         count += 1;
                     }
                 }
@@ -82,7 +88,7 @@ pub const WebSearchTool = struct {
 };
 
 fn percentEncodeQuery(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
-    var out = std.ArrayList(u8){};
+    var out: std.ArrayList(u8) = .empty;
     defer out.deinit(allocator);
 
     for (input) |char| {
@@ -91,7 +97,9 @@ fn percentEncodeQuery(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
         } else if (char == ' ') {
             try out.appendSlice(allocator, "%20");
         } else {
-            try out.writer(allocator).print("%{X:0>2}", .{char});
+            const hex = try std.fmt.allocPrint(allocator, "%{X:0>2}", .{char});
+            defer allocator.free(hex);
+            try out.appendSlice(allocator, hex);
         }
     }
 

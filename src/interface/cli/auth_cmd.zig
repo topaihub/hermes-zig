@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-pub fn handleAuthCommand(allocator: Allocator, args: []const u8, stdout: std.fs.File) !void {
+pub fn handleAuthCommand(allocator: Allocator, args: []const u8, stdout: std.Io.File) !void {
     if (args.len == 0 or std.mem.eql(u8, args, "list")) {
         try stdout.writeAll("  No API keys configured.\n");
     } else if (std.mem.eql(u8, args, "add")) {

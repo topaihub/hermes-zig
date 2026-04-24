@@ -4,7 +4,7 @@ const ToolResult = tools_interface.ToolResult;
 
 pub const TodoTool = struct {
     allocator: std.mem.Allocator,
-    items: std.ArrayList(Item) = .{},
+    items: std.ArrayList(Item) = .empty,
     next_id: i64 = 1,
 
     const Item = struct { id: i64, text: []const u8, done: bool = false };
@@ -38,10 +38,12 @@ pub const TodoTool = struct {
             return .{ .output = try std.fmt.allocPrint(allocator, "Added todo #{d}: {s}", .{ id, text }) };
         }
         if (std.mem.eql(u8, action, "list")) {
-            var buf: std.ArrayList(u8) = .{};
+            var buf: std.ArrayList(u8) = .empty;
             defer buf.deinit(allocator);
             for (self.items.items) |item| {
-                try buf.print(allocator, "[{s}] #{d}: {s}\n", .{ if (item.done) "x" else " ", item.id, item.text });
+                const line = try std.fmt.allocPrint(allocator, "[{s}] #{d}: {s}\n", .{ if (item.done) "x" else " ", item.id, item.text });
+                defer allocator.free(line);
+                try buf.appendSlice(allocator, line);
             }
             return .{ .output = if (buf.items.len > 0) try buf.toOwnedSlice(allocator) else try allocator.dupe(u8, "No todos") };
         }
