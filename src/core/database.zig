@@ -39,6 +39,19 @@ pub fn appendMessage(db: sqlite.Database, session_id: []const u8, role: []const 
     _ = try stmt.step();
 }
 
+pub fn appendToolMessage(db: sqlite.Database, session_id: []const u8, content: []const u8, tool_call_id: []const u8, tool_name: []const u8) !void {
+    const stmt = try db.prepare("INSERT INTO messages (session_id, role, content) VALUES (?1, 'tool', ?2)");
+    defer stmt.finalize();
+    try stmt.bindText(1, session_id);
+    
+    // Format: tool_name(tool_call_id): content
+    var buf: [4096]u8 = undefined;
+    const formatted = try std.fmt.bufPrint(&buf, "{s}({s}): {s}", .{ tool_name, tool_call_id, content });
+    try stmt.bindText(2, formatted);
+    
+    _ = try stmt.step();
+}
+
 pub fn getMessageCount(db: sqlite.Database, session_id: []const u8) !i64 {
     const stmt = try db.prepare("SELECT COUNT(*) FROM messages WHERE session_id = ?1");
     defer stmt.finalize();
@@ -57,4 +70,14 @@ test "schema and CRUD" {
     try appendMessage(db, "s1", "user", "hello");
     try appendMessage(db, "s1", "assistant", "hi");
     try std.testing.expectEqual(@as(i64, 2), try getMessageCount(db, "s1"));
+}
+
+test "appendToolMessage" {
+    const db = try sqlite.Database.open(":memory:");
+    defer db.close();
+    try initSchema(db);
+    try createSession(db, "s2", "cli", "gpt-4");
+    try appendMessage(db, "s2", "user", "search for cats");
+    try appendToolMessage(db, "s2", "Found 10 results", "call_123", "web_search");
+    try std.testing.expectEqual(@as(i64, 2), try getMessageCount(db, "s2"));
 }
