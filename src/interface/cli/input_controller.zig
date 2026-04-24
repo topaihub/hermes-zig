@@ -163,7 +163,7 @@ const Editor = struct {
     rendered_menu_lines: usize = 0,
 
     fn deinit(self: *Editor) void {
-        self.buffer.deinit(self.allocator);
+        self.buffer.deinit();
     }
 
     fn appendText(self: *Editor, text: []const u8) !void {
@@ -652,7 +652,10 @@ const ConsoleInputModeGuard = struct {
 };
 
 test "editor slash prefix opens suggestions" {
-    var editor = Editor{ .allocator = std.testing.allocator };
+    var editor = Editor{ 
+        .allocator = std.testing.allocator,
+        .buffer = std.ArrayList(u8).empty,
+    };
     defer editor.deinit();
 
     try editor.appendText("/");
@@ -662,7 +665,10 @@ test "editor slash prefix opens suggestions" {
 }
 
 test "editor tab completion appends trailing space for arg commands" {
-    var editor = Editor{ .allocator = std.testing.allocator };
+    var editor = Editor{ 
+        .allocator = std.testing.allocator,
+        .buffer = std.ArrayList(u8).empty,
+    };
     defer editor.deinit();
 
     try editor.appendText("/skills u");
@@ -673,7 +679,10 @@ test "editor tab completion appends trailing space for arg commands" {
 }
 
 test "editor leaving slash mode hides suggestions" {
-    var editor = Editor{ .allocator = std.testing.allocator };
+    var editor = Editor{ 
+        .allocator = std.testing.allocator,
+        .buffer = std.ArrayList(u8).empty,
+    };
     defer editor.deinit();
 
     try editor.appendText("/");
@@ -683,7 +692,10 @@ test "editor leaving slash mode hides suggestions" {
 }
 
 test "editor selection scrolls viewport" {
-    var editor = Editor{ .allocator = std.testing.allocator };
+    var editor = Editor{ 
+        .allocator = std.testing.allocator,
+        .buffer = std.ArrayList(u8).empty,
+    };
     defer editor.deinit();
 
     try editor.appendText("/");
@@ -698,7 +710,10 @@ test "editor selection scrolls viewport" {
 }
 
 test "editor enter can submit selected slash command" {
-    var editor = Editor{ .allocator = std.testing.allocator };
+    var editor = Editor{ 
+        .allocator = std.testing.allocator,
+        .buffer = std.ArrayList(u8).empty,
+    };
     defer editor.deinit();
 
     try editor.appendText("/");
